@@ -1,4 +1,5 @@
 export type ConciergeToolName =
+  | 'get_contact_info'
   | 'find_matching_programs'
   | 'get_program_detail'
   | 'update_inquiry'
@@ -9,6 +10,12 @@ export type ConciergeToolName =
   | 'list_available_accommodations'
   | 'list_weeks_options'
   | 'extract_inquiry_fields';
+
+export type GetContactInfoArgs = {
+  contactId?: string | null;
+  conversationId?: string | null;
+  waId?: string | null;
+};
 
 export type FindMatchingProgramsArgs = {
   countryCode: string;
@@ -85,6 +92,8 @@ export type ExtractInquiryFieldsArgs = {
     | 'preferredStartMonth'
     | 'preferredStartYear'
     | 'weeks'
+    | 'contactName'
+    | 'contactEmail'
     | null;
   recentMessages?: Array<{
     direction?: 'INBOUND' | 'OUTBOUND' | 'SYSTEM';

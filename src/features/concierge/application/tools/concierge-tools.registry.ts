@@ -1,6 +1,22 @@
 export const conciergeTools = [
   {
     type: 'function',
+    name: 'get_contact_info',
+    description:
+      'Get saved customer/contact information for the current WhatsApp contact or conversation. Use it to decide whether name/email already exist before asking again.',
+    parameters: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        contactId: { type: 'string' },
+        conversationId: { type: 'string' },
+        waId: { type: 'string' },
+      },
+      required: [],
+    },
+  },
+  {
+    type: 'function',
     name: 'detect_user_intent',
     description:
       'Detect user intent from latest message and recent context (greeting, menu option, quote request, available countries question, etc).',
@@ -143,6 +159,8 @@ export const conciergeTools = [
             'preferredStartMonth',
             'preferredStartYear',
             'weeks',
+            'contactName',
+            'contactEmail',
           ],
         },
         recentMessages: {

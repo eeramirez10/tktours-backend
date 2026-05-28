@@ -599,13 +599,40 @@ export class ConciergeOrchestratorService {
       };
     }
 
-    const nextField = enforcedField ?? parsed.missingFields[0] ?? null;
-
-    if (!nextField) {
-      const shouldCloseConversation = this.hasContactEmail(context);
+    if (!context.activeInquiry?.family?.key && detectedIntent === 'UNKNOWN' && !policySignals.menuWasShown) {
       return {
         structured: {
           ...parsed,
+          shouldAskFollowUp: false,
+          missingFields: [],
+          nextStage: 'START',
+          shouldRefreshRecommendations: false,
+        },
+        trace: {
+          strategy: 'none',
+          details: {
+            reason: 'initial_unknown_keep_menu',
+            intent: detectedIntent,
+            confidence: policySignals.confidence,
+          },
+        },
+      };
+    }
+
+    const nextField = enforcedField ?? this.getFirstStillMissingField(parsed.missingFields, context.activeInquiry);
+
+    if (!nextField) {
+      const shouldCloseConversation = this.isReadyForAdvisorHandoff(context) && this.hasContactName(context) && this.hasContactEmail(context);
+      const replyText = shouldCloseConversation
+        ? await this.buildPromptDrivenHandoffConfirmation({
+            context,
+            fallbackReplyText: parsed.replyText,
+          })
+        : parsed.replyText;
+      return {
+        structured: {
+          ...parsed,
+          replyText,
           nextStage: shouldCloseConversation ? 'CLOSED' : parsed.nextStage,
           shouldAskFollowUp: false,
           missingFields: [],
@@ -877,7 +904,9 @@ export class ConciergeOrchestratorService {
       | 'accommodation'
       | 'preferredStartMonth'
       | 'preferredStartYear'
-      | 'weeks',
+      | 'weeks'
+      | 'contactName'
+      | 'contactEmail',
   ):
     | 'START'
     | 'QUALIFY_AGE'
@@ -906,6 +935,9 @@ export class ConciergeOrchestratorService {
       case 'preferredStartYear':
       case 'weeks':
         return 'QUALIFY_DATES';
+      case 'contactName':
+      case 'contactEmail':
+        return 'RECOMMEND';
       default:
         return null;
     }
@@ -923,27 +955,120 @@ export class ConciergeOrchestratorService {
     | 'preferredStartMonth'
     | 'preferredStartYear'
     | 'weeks'
+    | 'contactName'
+    | 'contactEmail'
     | null {
     if (!inquiry) return null;
     const preferredStartStatus = this.getPreferredStartStatusFromInquiry(inquiry);
     const weeksStatus = this.getWeeksStatusFromInquiry(inquiry);
-    if (!inquiry.country?.code) return 'country';
-    if (inquiry.studentAge == null) return 'studentAge';
-    if (!this.getResidenceCountryFromInquiry(inquiry)) return 'residenceCountry';
-    if (!inquiry.cityOfResidence) return 'cityOfResidence';
     if (!inquiry.family?.key) return 'family';
+
     if (inquiry.family.key === 'CAMP') {
+      if (inquiry.studentAge == null) return 'studentAge';
+      if (!inquiry.country?.code) return 'country';
+      if (!this.getResidenceCountryFromInquiry(inquiry)) return 'residenceCountry';
+      if (!inquiry.cityOfResidence) return 'cityOfResidence';
       if (preferredStartStatus !== 'UNDECIDED' && inquiry.preferredStartMonth == null) return 'preferredStartMonth';
       if (preferredStartStatus !== 'UNDECIDED' && inquiry.preferredStartYear == null) return 'preferredStartYear';
       if (!inquiry.accommodationType?.key) return 'accommodation';
       if (weeksStatus !== 'UNDECIDED' && inquiry.weeks == null) return 'weeks';
+      if (!this.hasContactNameForInquiry(inquiry)) return 'contactName';
+      if (!this.hasContactEmailForInquiry(inquiry)) return 'contactEmail';
       return null;
     }
+
+    if (!inquiry.country?.code) return 'country';
+    if (inquiry.studentAge == null) return 'studentAge';
+    if (!this.getResidenceCountryFromInquiry(inquiry)) return 'residenceCountry';
+    if (!inquiry.cityOfResidence) return 'cityOfResidence';
     if (preferredStartStatus !== 'UNDECIDED' && inquiry.preferredStartMonth == null) return 'preferredStartMonth';
     if (preferredStartStatus !== 'UNDECIDED' && inquiry.preferredStartYear == null) return 'preferredStartYear';
     if (weeksStatus !== 'UNDECIDED' && inquiry.weeks == null) return 'weeks';
     if (!inquiry.accommodationType?.key) return 'accommodation';
+    if (!this.hasContactNameForInquiry(inquiry)) return 'contactName';
+    if (!this.hasContactEmailForInquiry(inquiry)) return 'contactEmail';
     return null;
+  }
+
+  private getFirstStillMissingField(
+    fields: Array<
+      | 'country'
+      | 'studentAge'
+      | 'residenceCountry'
+      | 'cityOfResidence'
+      | 'family'
+      | 'program'
+      | 'accommodation'
+      | 'preferredStartMonth'
+      | 'preferredStartYear'
+      | 'weeks'
+      | 'contactName'
+      | 'contactEmail'
+    >,
+    inquiry: ConciergeTurnContext['activeInquiry'],
+  ):
+    | 'country'
+    | 'studentAge'
+    | 'residenceCountry'
+    | 'cityOfResidence'
+    | 'family'
+    | 'program'
+    | 'accommodation'
+    | 'preferredStartMonth'
+    | 'preferredStartYear'
+    | 'weeks'
+    | 'contactName'
+    | 'contactEmail'
+    | null {
+    return fields.find((field) => this.isFieldStillMissing(field, inquiry)) ?? null;
+  }
+
+  private isFieldStillMissing(
+    field:
+      | 'country'
+      | 'studentAge'
+      | 'residenceCountry'
+      | 'cityOfResidence'
+      | 'family'
+      | 'program'
+      | 'accommodation'
+      | 'preferredStartMonth'
+      | 'preferredStartYear'
+      | 'weeks'
+      | 'contactName'
+      | 'contactEmail',
+    inquiry: ConciergeTurnContext['activeInquiry'],
+  ): boolean {
+    if (!inquiry) return false;
+
+    switch (field) {
+      case 'country':
+        return !inquiry.country?.code;
+      case 'studentAge':
+        return inquiry.studentAge == null;
+      case 'residenceCountry':
+        return !this.getResidenceCountryFromInquiry(inquiry);
+      case 'cityOfResidence':
+        return !inquiry.cityOfResidence;
+      case 'family':
+        return !inquiry.family?.key;
+      case 'program':
+        return false;
+      case 'accommodation':
+        return !inquiry.accommodationType?.key;
+      case 'preferredStartMonth':
+        return this.getPreferredStartStatusFromInquiry(inquiry) !== 'UNDECIDED' && inquiry.preferredStartMonth == null;
+      case 'preferredStartYear':
+        return this.getPreferredStartStatusFromInquiry(inquiry) !== 'UNDECIDED' && inquiry.preferredStartYear == null;
+      case 'weeks':
+        return this.getWeeksStatusFromInquiry(inquiry) !== 'UNDECIDED' && inquiry.weeks == null;
+      case 'contactName':
+        return !this.hasContactNameForInquiry(inquiry);
+      case 'contactEmail':
+        return !this.hasContactEmailForInquiry(inquiry);
+      default:
+        return false;
+    }
   }
 
   private normalizeHandoffStep(
@@ -954,9 +1079,13 @@ export class ConciergeOrchestratorService {
       return null;
     }
 
+    if (!this.isReadyForAdvisorHandoff(context)) {
+      return null;
+    }
+
     const contact = context.activeInquiry?.contact ?? context.conversation?.contact ?? null;
-    const hasName = Boolean(contact?.lastName || contact?.firstName);
-    const hasEmail = Boolean(contact?.email);
+    const hasName = this.hasContactName(context);
+    const hasEmail = this.hasContactEmail(context);
 
     if (!hasName) {
       return 'ask_name';
@@ -967,9 +1096,39 @@ export class ConciergeOrchestratorService {
     return 'confirm_handoff';
   }
 
+  private isReadyForAdvisorHandoff(context: ConciergeTurnContext): boolean {
+    const inquiry = context.activeInquiry;
+    if (!inquiry?.family?.key) return false;
+    if (!inquiry.country?.code) return false;
+    if (inquiry.studentAge == null) return false;
+    if (!this.getResidenceCountryFromInquiry(inquiry)) return false;
+    if (!inquiry.cityOfResidence) return false;
+    if (!inquiry.accommodationType?.key) return false;
+    return true;
+  }
+
   private hasContactEmail(context: ConciergeTurnContext): boolean {
     const email = context.activeInquiry?.contact?.email ?? context.conversation?.contact?.email ?? null;
     return typeof email === 'string' && email.trim().length > 0;
+  }
+
+  private hasContactName(context: ConciergeTurnContext): boolean {
+    return this.hasContactNameForInquiry(context.activeInquiry) || this.hasContactNameFromContact(context.conversation?.contact ?? null);
+  }
+
+  private hasContactNameForInquiry(inquiry: ConciergeTurnContext['activeInquiry']): boolean {
+    return this.hasContactNameFromContact(inquiry?.contact ?? null);
+  }
+
+  private hasContactEmailForInquiry(inquiry: ConciergeTurnContext['activeInquiry']): boolean {
+    const email = inquiry?.contact?.email ?? null;
+    return typeof email === 'string' && email.trim().length > 0;
+  }
+
+  private hasContactNameFromContact(contact: { firstName?: string | null; lastName?: string | null } | null): boolean {
+    const firstName = contact?.firstName?.trim() ?? '';
+    const lastName = contact?.lastName?.trim() ?? '';
+    return Boolean(lastName || (firstName && firstName.includes(' ')));
   }
 
   private async withCatalogOptionsForFollowUp(params: {
@@ -984,7 +1143,9 @@ export class ConciergeOrchestratorService {
       | 'accommodation'
       | 'preferredStartMonth'
       | 'preferredStartYear'
-      | 'weeks';
+      | 'weeks'
+      | 'contactName'
+      | 'contactEmail';
     context: ConciergeTurnContext;
   }): Promise<string> {
     if (params.nextField === 'country') {
@@ -1018,7 +1179,9 @@ export class ConciergeOrchestratorService {
       | 'accommodation'
       | 'preferredStartMonth'
       | 'preferredStartYear'
-      | 'weeks';
+      | 'weeks'
+      | 'contactName'
+      | 'contactEmail';
     context: ConciergeTurnContext;
     fallbackReplyText: string;
   }): Promise<string> {
@@ -1055,6 +1218,8 @@ export class ConciergeOrchestratorService {
         '- preferredStartYear: "¿En qué año te gustaría comenzar?"',
         '- weeks: "¿Cuántas semanas te gustaría estudiar?"',
         '- accommodation: "Para cerrar esta parte, ¿qué tipo de alojamiento prefieren?"',
+        '- contactName: "Con eso ya puedo dejarlo encaminado. ¿Me compartes tu nombre completo?"',
+        '- contactEmail: "Gracias. ¿Cuál es tu correo electrónico para que un asesor pueda dar seguimiento?"',
       ].join('\n');
 
       const response = await this.responsesClient.createTextResponse({
@@ -1091,6 +1256,42 @@ export class ConciergeOrchestratorService {
         nextField: params.nextField,
         context: params.context,
       });
+    }
+  }
+
+  private async buildPromptDrivenHandoffConfirmation(params: {
+    context: ConciergeTurnContext;
+    fallbackReplyText: string;
+  }): Promise<string> {
+    try {
+      const contact = params.context.activeInquiry?.contact ?? params.context.conversation?.contact ?? null;
+      const instructions = [
+        'Eres un concierge comercial para TKTours.',
+        'Escribe un cierre breve, cálido y natural en español.',
+        'El cliente ya tiene datos de contacto guardados; NO pidas nombre ni correo.',
+        'Confirma que la información quedó lista y que un asesor dará seguimiento más adelante.',
+        'No prometas precios, disponibilidad ni tiempos exactos.',
+        'No menciones bases de datos, herramientas ni sistemas.',
+        'Responde solo texto plano.',
+      ].join('\n');
+
+      const response = await this.responsesClient.createTextResponse({
+        instructions,
+        input: JSON.stringify({
+          firstName: contact?.firstName ?? null,
+          lastName: contact?.lastName ?? null,
+          email: contact?.email ?? null,
+          familyKey: params.context.activeInquiry?.family?.key ?? null,
+          countryName: params.context.activeInquiry?.country?.name ?? null,
+          studentAge: params.context.activeInquiry?.studentAge ?? null,
+          cityOfResidence: params.context.activeInquiry?.cityOfResidence ?? null,
+        }),
+      });
+
+      const candidate = (response.outputText ?? '').trim();
+      return candidate || params.fallbackReplyText;
+    } catch {
+      return params.fallbackReplyText;
     }
   }
 

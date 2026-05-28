@@ -1,11 +1,13 @@
 import { CatalogRepository } from '../../../catalog/infrastructure/repositories/catalog.repository.js';
 import { PrismaInquiryRepository } from '../../../inquiries/infrastructure/repositories/prisma-inquiry.repository.js';
+import { prisma } from '../../../../shared/infrastructure/database/prisma.js';
 import { OpenAiResponsesClient } from '../../infrastructure/clients/openai-response.js';
 import {
   DetectUserIntentArgs,
   EvaluatePolicySignalsArgs,
   ExtractInquiryFieldsArgs,
   FindMatchingProgramsArgs,
+  GetContactInfoArgs,
   GetProgramDetailArgs,
   ListAvailableAccommodationsArgs,
   ListAvailableCountriesArgs,
@@ -54,6 +56,16 @@ type PolicySignals = {
   needsClarification: boolean;
 };
 
+const contactInfoSelect = {
+  id: true,
+  waId: true,
+  firstName: true,
+  lastName: true,
+  email: true,
+  phone: true,
+  city: true,
+} as const;
+
 const defaultExtractedFields: ExtractedInquiryFields = {
   countryCode: null,
   studentAge: null,
@@ -81,6 +93,8 @@ export class ConciergeToolExecutorService {
 
   async execute(toolName: string, args: unknown) {
     switch (toolName) {
+      case 'get_contact_info':
+        return this.getContactInfo(args as GetContactInfoArgs);
       case 'detect_user_intent':
         return this.detectUserIntent(args as DetectUserIntentArgs);
       case 'extract_inquiry_fields':
@@ -108,6 +122,49 @@ export class ConciergeToolExecutorService {
 
   private async findMatchingPrograms(args: FindMatchingProgramsArgs) {
     return this.catalogRepository.findRecommendedPrograms(args);
+  }
+
+  private async getContactInfo(args: GetContactInfoArgs) {
+    const contactId = this.asNonEmptyString(args.contactId);
+    const conversationId = this.asNonEmptyString(args.conversationId);
+    const waId = this.asNonEmptyString(args.waId);
+
+    const contact = contactId
+      ? await prisma.contact.findUnique({ where: { id: contactId }, select: contactInfoSelect })
+      : conversationId
+        ? (
+            await prisma.conversation.findUnique({
+              where: { id: conversationId },
+              select: { contact: { select: contactInfoSelect } },
+            })
+          )?.contact ?? null
+        : waId
+          ? await prisma.contact.findUnique({ where: { waId }, select: contactInfoSelect })
+          : null;
+
+    const firstName = this.asNonEmptyString(contact?.firstName);
+    const lastName = this.asNonEmptyString(contact?.lastName);
+    const email = this.asEmail(contact?.email);
+    const hasName = Boolean(lastName || (firstName && firstName.includes(' ')));
+    const hasEmail = Boolean(email);
+
+    return {
+      exists: Boolean(contact),
+      hasName,
+      hasEmail,
+      isComplete: hasName && hasEmail,
+      contact: contact
+        ? {
+            id: contact.id,
+            waId: contact.waId,
+            firstName,
+            lastName,
+            email,
+            phone: this.asNonEmptyString(contact.phone),
+            city: this.asNonEmptyString(contact.city),
+          }
+        : null,
+    };
   }
 
   private async detectUserIntent(args: DetectUserIntentArgs) {

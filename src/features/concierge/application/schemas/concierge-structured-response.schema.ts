@@ -12,6 +12,8 @@ const MISSING_FIELDS = [
   'preferredStartMonth',
   'preferredStartYear',
   'weeks',
+  'contactName',
+  'contactEmail',
 ] as const;
 
 const NEXT_STAGES = [
