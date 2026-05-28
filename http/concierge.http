@@ -1,0 +1,78 @@
+@baseUrl = http://localhost:3000
+@conversationId = a5f99903-3f28-4cce-87b4-27cd980438dc
+@incomingMessageId = 81810dc1-05f0-4815-8164-20390a7ca355
+@inquiryId = f6248231-e358-4c75-b742-226f4d63e692
+@turnId = replace-me
+
+### 1) Create conversation
+POST {{baseUrl}}/api/conversations
+Content-Type: application/json
+Accept: application/json
+
+{
+  "channel": "WHATSAPP",
+  "status": "OPEN",
+  "currentStage": "START",
+  "contextJson": {
+    "source": "manual-e2e-test"
+  }
+}
+
+### 2) Add inbound message to conversation
+POST {{baseUrl}}/api/conversations/{{conversationId}}/messages
+Content-Type: application/json
+Accept: application/json
+
+{
+  "direction": "INBOUND",
+  "text": "Hola, busco un curso de idiomas en Canadá para octubre y tengo 19 años",
+  "providerMessageId": "manual-msg-001",
+  "metadata": {
+    "source": "manual-e2e-test"
+  }
+}
+
+### 3) Inspect conversation and copy latest message id as incomingMessageId
+GET {{baseUrl}}/api/conversations/{{conversationId}}
+Accept: application/json
+
+### 4) Create inquiry linked to conversation
+POST {{baseUrl}}/api/inquiries
+Content-Type: application/json
+Accept: application/json
+
+{
+  "conversationId": "{{conversationId}}",
+  "channel": "WHATSAPP",
+  "countryCode": "CA",
+  "familyKey": "LANGUAGE_COURSE",
+  "studentAge": 19,
+  "preferredStartMonth": 10,
+  "notes": "Lead creado para prueba concierge"
+}
+
+### 5) Run concierge turn
+POST {{baseUrl}}/api/concierge/run-turn
+Content-Type: application/json
+Accept: application/json
+
+{
+  "conversationId": "{{conversationId}}",
+  "incomingMessageId": "{{incomingMessageId}}"
+}
+
+### 6) Verify conversation after assistant reply
+GET {{baseUrl}}/api/conversations/{{conversationId}}
+Accept: application/json
+
+### 7) Verify inquiry after recommendation refresh
+GET {{baseUrl}}/api/inquiries/{{inquiryId}}
+Accept: application/json
+
+### 8) List concierge turns
+GET {{baseUrl}}/api/concierge/turns
+Accept: application/json
+
+### 9) Get one concierge turn detail
+GET {{baseUrl}}/api/concierge/turns/{{turnId}}
+Accept: application/json

@@ -1,0 +1,37 @@
+@baseUrl = http://localhost:3000
+
+### API root health
+GET {{baseUrl}}/health
+Accept: application/json
+
+### Catalog health
+GET {{baseUrl}}/api/catalog/health
+Accept: application/json
+
+### Catalog countries
+GET {{baseUrl}}/api/catalog/countries
+Accept: application/json
+
+### Catalog families
+GET {{baseUrl}}/api/catalog/families
+Accept: application/json
+
+### Catalog programs
+GET {{baseUrl}}/api/catalog/programs
+Accept: application/json
+
+### Resources health
+GET {{baseUrl}}/api/resources/health
+Accept: application/json
+
+### Resources list
+GET {{baseUrl}}/api/resources
+Accept: application/json
+
+### Inquiries placeholder (expected 404 for now)
+GET {{baseUrl}}/api/inquiries
+Accept: application/json
+
+### Conversations placeholder (expected 404 for now)
+GET {{baseUrl}}/api/conversations
+Accept: application/json

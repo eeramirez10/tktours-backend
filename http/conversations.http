@@ -1,0 +1,68 @@
+@baseUrl = http://localhost:3000
+@conversationId = e9722422-f6bd-4144-ba7a-2ef68043d298
+
+### Service health
+GET {{baseUrl}}/health
+Accept: application/json
+
+### Conversations health
+GET {{baseUrl}}/api/conversations/health
+Accept: application/json
+
+### List conversations
+GET {{baseUrl}}/api/conversations
+Accept: application/json
+
+### Create conversation
+POST {{baseUrl}}/api/conversations
+Content-Type: application/json
+Accept: application/json
+
+{
+  "channel": "WHATSAPP",
+  "status": "OPEN",
+  "currentStage": "START",
+  "contextJson": {
+    "source": "admin-test"
+  }
+}
+
+### Conversation detail
+GET {{baseUrl}}/api/conversations/{{conversationId}}
+Accept: application/json
+
+### Update conversation
+PATCH {{baseUrl}}/api/conversations/{{conversationId}}
+Content-Type: application/json
+Accept: application/json
+
+{
+  "status": "CLOSED"
+}
+
+### Add inbound message
+POST {{baseUrl}}/api/conversations/{{conversationId}}/messages
+Content-Type: application/json
+Accept: application/json
+
+{
+  "direction": "INBOUND",
+  "text": "Hola, me interesa un summer camp en Canadá",
+  "providerMessageId": "wa-msg-001",
+  "metadata": {
+    "source": "manual-http"
+  }
+}
+
+### Add outbound message
+POST {{baseUrl}}/api/conversations/{{conversationId}}/messages
+Content-Type: application/json
+Accept: application/json
+
+{
+  "direction": "OUTBOUND",
+  "text": "Claro, te ayudo a encontrar opciones.",
+  "metadata": {
+    "sentBy": "assistant"
+  }
+}

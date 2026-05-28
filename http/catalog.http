@@ -1,0 +1,81 @@
+@baseUrl = http://localhost:3000
+
+### Service health
+GET {{baseUrl}}/health
+Accept: application/json
+
+### Catalog health
+GET {{baseUrl}}/api/catalog/health
+Accept: application/json
+
+### Countries - active only (default)
+GET {{baseUrl}}/api/catalog/countries
+Accept: application/json
+
+### Countries - include inactive
+GET {{baseUrl}}/api/catalog/countries?active=false
+Accept: application/json
+
+### Families - active only (default)
+GET {{baseUrl}}/api/catalog/families
+Accept: application/json
+
+### Families - include inactive
+GET {{baseUrl}}/api/catalog/families?active=false
+Accept: application/json
+
+### Programs - all active
+GET {{baseUrl}}/api/catalog/programs
+Accept: application/json
+
+### Programs - by country
+GET {{baseUrl}}/api/catalog/programs?countryCode=CA
+Accept: application/json
+
+### Programs - by family: camp
+GET {{baseUrl}}/api/catalog/programs?familyKey=CAMP
+Accept: application/json
+
+### Programs - by family: language course
+GET {{baseUrl}}/api/catalog/programs?familyKey=LANGUAGE_COURSE
+Accept: application/json
+
+### Programs - by family: school program
+GET {{baseUrl}}/api/catalog/programs?familyKey=SCHOOL_PROGRAM
+Accept: application/json
+
+### Programs - country + family
+GET {{baseUrl}}/api/catalog/programs?countryCode=CA&familyKey=CAMP
+Accept: application/json
+
+### Programs - search by text
+GET {{baseUrl}}/api/catalog/programs?search=canada
+Accept: application/json
+
+### Programs - include inactive too
+GET {{baseUrl}}/api/catalog/programs?active=false
+Accept: application/json
+
+### Programs - combined filters
+GET {{baseUrl}}/api/catalog/programs?countryCode=CA&familyKey=LANGUAGE_COURSE&search=language
+Accept: application/json
+
+### Program detail with resources
+GET {{baseUrl}}/api/catalog/programs/canada-summer-camp
+Accept: application/json
+
+### Program recommendations for IA lookup
+GET {{baseUrl}}/api/catalog/programs/recommendations?countryCode=CA&familyKey=CAMP&studentAge=15&preferredStartMonth=7&accommodationKey=HOST_FAMILY&weeks=2
+Accept: application/json
+
+### Program recommendations - language course adult
+GET {{baseUrl}}/api/catalog/programs/recommendations?countryCode=CA&familyKey=LANGUAGE_COURSE&studentAge=19&preferredStartMonth=10&accommodationKey=SHARED_APARTMENT&weeks=8
+Accept: application/json
+
+### Programs - invalid familyKey (should fail validation)
+GET {{baseUrl}}/api/catalog/programs?familyKey=INVALID_KEY
+Accept: application/json
+
+### Countries - invalid active (should fail validation)
+GET {{baseUrl}}/api/catalog/countries?active=maybe
+Accept: application/json

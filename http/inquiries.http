@@ -1,0 +1,80 @@
+@baseUrl = http://localhost:3000
+@inquiryId = replace-me
+
+### Service health
+GET {{baseUrl}}/health
+Accept: application/json
+
+### Inquiries health
+GET {{baseUrl}}/api/inquiries/health
+Accept: application/json
+
+### List inquiries
+GET {{baseUrl}}/api/inquiries
+Accept: application/json
+
+### Create inquiry with new contact + auto conversation
+POST {{baseUrl}}/api/inquiries
+Content-Type: application/json
+Accept: application/json
+
+{
+  "channel": "WHATSAPP",
+  "countryCode": "CA",
+  "familyKey": "CAMP",
+  "programSlug": "canada-summer-camp",
+  "studentAge": 15,
+  "cityOfResidence": "Monterrey",
+  "preferredStartMonth": 7,
+  "preferredStartYear": 2026,
+  "accommodationKey": "HOST_FAMILY",
+  "weeks": 2,
+  "notes": "Lead interesado en summer camp",
+  "contact": {
+    "waId": "5215550000001",
+    "firstName": "Erick",
+    "lastName": "Ramirez",
+    "phone": "+525550000001",
+    "city": "Monterrey"
+  },
+  "qualificationJson": {
+    "source": "admin-manual",
+    "priority": "high"
+  }
+}
+
+### Inquiry detail
+GET {{baseUrl}}/api/inquiries/{{inquiryId}}
+Accept: application/json
+
+### Update inquiry
+PATCH {{baseUrl}}/api/inquiries/{{inquiryId}}
+Content-Type: application/json
+Accept: application/json
+
+{
+  "familyKey": "LANGUAGE_COURSE",
+  "programSlug": "canada-language-course",
+  "studentAge": 19,
+  "preferredStartMonth": 10,
+  "weeks": 8,
+  "accommodationKey": "SHARED_APARTMENT",
+  "notes": "Cambio a curso de idiomas"
+}
+
+### Update inquiry status
+PATCH {{baseUrl}}/api/inquiries/{{inquiryId}}/status
+Content-Type: application/json
+Accept: application/json
+
+{
+  "status": "READY_TO_RECOMMEND"
+}
+
+### Refresh recommendations from inquiry data
+POST {{baseUrl}}/api/inquiries/{{inquiryId}}/recommendations/refresh
+Accept: application/json
+
+### Filter inquiries by country + family
+GET {{baseUrl}}/api/inquiries?countryCode=CA&familyKey=CAMP
+Accept: application/json

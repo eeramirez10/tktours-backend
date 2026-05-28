@@ -1,0 +1,150 @@
+@baseUrl = http://localhost:3000
+@resourceId = cmp5vxnit00019ynb3h5f7uzs
+@versionId = replace-me
+
+### Service health
+GET {{baseUrl}}/health
+Accept: application/json
+
+### Resources health
+GET {{baseUrl}}/api/resources/health
+Accept: application/json
+
+### Resources - active only (default)
+GET {{baseUrl}}/api/resources
+Accept: application/json
+
+### Resources - include inactive
+GET {{baseUrl}}/api/resources?active=false
+Accept: application/json
+
+### Resources - by type
+GET {{baseUrl}}/api/resources?type=BROCHURE
+Accept: application/json
+
+### Resources - by country
+GET {{baseUrl}}/api/resources?countryCode=CA
+Accept: application/json
+
+### Resources - by family
+GET {{baseUrl}}/api/resources?familyKey=CAMP
+Accept: application/json
+
+### Resources - by program slug
+GET {{baseUrl}}/api/resources?programSlug=canada-summer-camp
+Accept: application/json
+
+### Resources - search
+GET {{baseUrl}}/api/resources?search=canada
+Accept: application/json
+
+### Resources - combined filters
+GET {{baseUrl}}/api/resources?countryCode=CA&familyKey=LANGUAGE_COURSE&type=INFO&search=canada
+Accept: application/json
+
+### Resources - invalid type (should fail validation)
+GET {{baseUrl}}/api/resources?type=PDF
+Accept: application/json
+
+### Resource by id
+GET {{baseUrl}}/api/resources/{{resourceId}}
+Accept: application/json
+
+### Create resource - metadata only
+POST {{baseUrl}}/api/resources
+Content-Type: application/json
+Accept: application/json
+
+{
+  "countryCode": "CA",
+  "type": "INFO",
+  "title": "Canada general info sheet",
+  "description": "Useful high-level info for Canada programs",
+  "active": true
+}
+
+### Create resource - with initial external version
+POST {{baseUrl}}/api/resources
+Content-Type: application/json
+Accept: application/json
+
+{
+  "countryCode": "CA",
+  "familyKey": "CAMP",
+  "programSlug": "canada-summer-camp",
+  "type": "BROCHURE",
+  "title": "Canada Summer Camp brochure 2026",
+  "description": "Latest brochure for summer camp",
+  "month": 6,
+  "year": 2026,
+  "active": true,
+  "initialVersion": {
+    "sourceType": "EXTERNAL_LINK",
+    "fileName": "canada-summer-camp-brochure-2026.pdf",
+    "mimeType": "application/pdf",
+    "externalUrl": "https://example.com/canada-summer-camp-brochure-2026.pdf"
+  }
+}
+
+### Update resource metadata
+PATCH {{baseUrl}}/api/resources/{{resourceId}}
+Content-Type: application/json
+Accept: application/json
+
+{
+  "title": "Canada Summer Camp brochure 2026 - updated",
+  "description": "Updated metadata for the brochure",
+  "month": 7,
+  "year": 2026
+}
+
+### Disable resource
+PATCH {{baseUrl}}/api/resources/{{resourceId}}/active
+Content-Type: application/json
+Accept: application/json
+
+{
+  "active": false
+}
+
+### Enable resource
+PATCH {{baseUrl}}/api/resources/{{resourceId}}/active
+Content-Type: application/json
+Accept: application/json
+
+{
+  "active": true
+}
+
+### Add external-link version (replace current)
+POST {{baseUrl}}/api/resources/{{resourceId}}/versions
+Content-Type: application/json
+Accept: application/json
+
+{
+  "sourceType": "EXTERNAL_LINK",
+  "fileName": "canada-summer-camp-brochure-2026-v2.pdf",
+  "mimeType": "application/pdf",
+  "externalUrl": "https://example.com/canada-summer-camp-brochure-2026-v2.pdf"
+}
+
+### Add uploaded version (replace current)
+# Base64 here is just the text "hello"
+POST {{baseUrl}}/api/resources/{{resourceId}}/versions
+Content-Type: application/json
+Accept: application/json
+
+{
+  "sourceType": "UPLOAD",
+  "fileName": "hello.txt",
+  "mimeType": "text/plain",
+  "fileContentBase64": "aGVsbG8="
+}
+
+### Download a stored/uploaded version
+GET {{baseUrl}}/api/resources/{{resourceId}}/versions/{{versionId}}/download
+Accept: application/octet-stream
+
+### Delete resource permanently
+DELETE {{baseUrl}}/api/resources/{{resourceId}}
+Accept: application/json

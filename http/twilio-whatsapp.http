@@ -1,0 +1,17 @@
+@baseUrl = http://localhost:3000
+
+### Health webhook Twilio WhatsApp
+GET {{baseUrl}}/webhooks/twilio/whatsapp/health
+Accept: application/json
+
+### Simular inbound de Twilio (form-urlencoded)
+POST {{baseUrl}}/webhooks/twilio/whatsapp
+Content-Type: application/x-www-form-urlencoded
+Accept: text/xml
+
+MessageSid=SM_TEST_001&
+From=whatsapp%3A%2B5215550000001&
+To=whatsapp%3A%2B14155238886&
+WaId=5215550000001&
+ProfileName=Erick&
+Body=Hola%2C%20quiero%20un%20curso%20de%20idiomas%20en%20Canada%20para%20octubre.%20Tengo%2019

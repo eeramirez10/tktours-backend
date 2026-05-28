@@ -1,0 +1,472 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum ProductFamilyKey {
+  CAMP
+  LANGUAGE_COURSE
+  SCHOOL_PROGRAM
+}
+
+enum QuoteMode {
+  WEEK
+  SEMESTER
+  YEAR
+  MINI_STAY
+}
+
+enum SeasonKey {
+  SUMMER
+  WINTER
+  EASTER
+  YEAR_ROUND
+  JANUARY
+  SEPTEMBER
+  CUSTOM
+}
+
+enum AccommodationKey {
+  HOST_FAMILY
+  UNIVERSITY_RESIDENCE
+  SHARED_APARTMENT
+}
+
+enum ResourceType {
+  QUOTE
+  INFO
+  BROCHURE
+  MANUAL
+  PRESENTATION
+}
+
+enum StorageProvider {
+  S3
+  R2
+  SUPABASE
+  EXTERNAL
+}
+
+enum ResourceSourceType {
+  UPLOAD
+  EXTERNAL_LINK
+}
+
+enum ExtractionStatus {
+  PENDING
+  PROCESSING
+  DONE
+  FAILED
+}
+
+enum Channel {
+  WHATSAPP
+  WEB
+  EMAIL
+}
+
+enum ConversationStatus {
+  OPEN
+  PAUSED
+  CLOSED
+  ARCHIVED
+}
+
+enum ConversationStage {
+  START
+  QUALIFY_AGE
+  QUALIFY_COUNTRY
+  QUALIFY_PROGRAM
+  QUALIFY_ACCOMMODATION
+  QUALIFY_DATES
+  RECOMMEND
+  SEND_RESOURCE
+  ESCALATED
+  CLOSED
+}
+
+enum MessageDirection {
+  INBOUND
+  OUTBOUND
+  SYSTEM
+}
+
+enum InquiryStatus {
+  OPEN
+  QUALIFYING
+  READY_TO_RECOMMEND
+  RECOMMENDED
+  WAITING_HUMAN
+  CLOSED
+}
+
+enum ConciergeTurnStatus {
+  STARTED
+  COMPLETED
+  FAILED
+}
+
+enum ConciergeToolCallStatus {
+  STARTED
+  COMPLETED
+  FAILED
+}
+
+model AdminUser {
+  id               String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  email            String            @unique
+  name             String
+  role             String?
+  createdResources Resource[]        @relation("ResourceCreatedBy")
+  updatedResources Resource[]        @relation("ResourceUpdatedBy")
+  uploadedVersions ResourceVersion[] @relation("VersionUploadedBy")
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
+}
+
+model Country {
+  id         String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name       String
+  code       String     @unique
+  active     Boolean    @default(true)
+  programs   Program[]
+  resources  Resource[]
+  inquiries  Inquiry[]
+  createdAt  DateTime   @default(now())
+  updatedAt  DateTime   @updatedAt
+}
+
+model ProductFamily {
+  id         String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  key        ProductFamilyKey  @unique
+  name       String
+  active     Boolean           @default(true)
+  programs   Program[]
+  resources  Resource[]
+  inquiries  Inquiry[]
+  createdAt  DateTime          @default(now())
+  updatedAt  DateTime          @updatedAt
+}
+
+model Program {
+  id                  String                     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  countryId           String @db.Uuid
+  familyId            String @db.Uuid
+  slug                String
+  name                String
+  description         String?
+  minAge              Int?
+  maxAge              Int?
+  active              Boolean                    @default(true)
+  country             Country                    @relation(fields: [countryId], references: [id])
+  family              ProductFamily              @relation(fields: [familyId], references: [id])
+  rule                ProgramRule?
+  accommodations      ProgramAccommodationRule[]
+  startWindows        ProgramStartWindow[]
+  resources           Resource[]
+  inquiries           Inquiry[]
+  recommendations     InquiryRecommendation[]
+  createdAt           DateTime                   @default(now())
+  updatedAt           DateTime                   @updatedAt
+
+  @@unique([countryId, slug])
+  @@index([familyId])
+}
+
+model ProgramRule {
+  id                String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  programId         String @db.Uuid    @unique
+  quoteMode         QuoteMode
+  minWeeks          Int?
+  maxWeeks          Int?
+  allowsMiniStay    Boolean   @default(false)
+  miniStayGroupOnly Boolean   @default(false)
+  notes             String?
+  active            Boolean   @default(true)
+  program           Program   @relation(fields: [programId], references: [id], onDelete: Cascade)
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+}
+
+model AccommodationType {
+  id         String                     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  key        AccommodationKey           @unique
+  name       String
+  active     Boolean                    @default(true)
+  programs   ProgramAccommodationRule[]
+  inquiries  Inquiry[]
+  createdAt  DateTime                   @default(now())
+  updatedAt  DateTime                   @updatedAt
+}
+
+model ProgramAccommodationRule {
+  id                  String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  programId           String @db.Uuid
+  accommodationTypeId String @db.Uuid
+  minAge              Int?
+  maxAge              Int?
+  notes               String?
+  active              Boolean            @default(true)
+  program             Program            @relation(fields: [programId], references: [id], onDelete: Cascade)
+  accommodationType   AccommodationType  @relation(fields: [accommodationTypeId], references: [id])
+  createdAt           DateTime           @default(now())
+  updatedAt           DateTime           @updatedAt
+
+  @@unique([programId, accommodationTypeId])
+}
+
+model ProgramStartWindow {
+  id                String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  programId         String @db.Uuid
+  seasonKey         SeasonKey
+  startMonth        Int?
+  endMonth          Int?
+  startDay          Int?
+  endDay            Int?
+  startsEveryMonday Boolean    @default(false)
+  notes             String?
+  active            Boolean    @default(true)
+  program           Program    @relation(fields: [programId], references: [id], onDelete: Cascade)
+  createdAt         DateTime   @default(now())
+  updatedAt         DateTime   @updatedAt
+
+  @@index([programId, seasonKey])
+}
+
+model Resource {
+  id              String                 @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  countryId       String @db.Uuid
+  familyId        String? @db.Uuid
+  programId       String? @db.Uuid
+  type            ResourceType
+  title           String
+  description     String?
+  month           Int?
+  year            Int?
+  active          Boolean                @default(true)
+  createdById     String? @db.Uuid
+  updatedById     String? @db.Uuid
+  country         Country                @relation(fields: [countryId], references: [id])
+  family          ProductFamily?         @relation(fields: [familyId], references: [id])
+  program         Program?               @relation(fields: [programId], references: [id])
+  createdBy       AdminUser?             @relation("ResourceCreatedBy", fields: [createdById], references: [id])
+  updatedBy       AdminUser?             @relation("ResourceUpdatedBy", fields: [updatedById], references: [id])
+  versions        ResourceVersion[]
+  recommendations InquiryRecommendation[]
+  sends           InquiryResourceSend[]
+  createdAt       DateTime               @default(now())
+  updatedAt       DateTime               @updatedAt
+
+  @@index([countryId, type, active])
+  @@index([familyId])
+  @@index([programId])
+  @@index([month, year])
+}
+
+model ResourceVersion {
+  id              String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  resourceId      String @db.Uuid
+  versionNumber   Int
+  storageProvider StorageProvider
+  sourceType      ResourceSourceType
+  fileUrl         String
+  storageKey      String?
+  fileName        String
+  mimeType        String?
+  fileSize        Int?
+  uploadedById    String? @db.Uuid
+  isCurrent       Boolean             @default(true)
+  resource        Resource            @relation(fields: [resourceId], references: [id], onDelete: Cascade)
+  uploadedBy      AdminUser?          @relation("VersionUploadedBy", fields: [uploadedById], references: [id])
+  extraction      ResourceExtraction?
+  sends           InquiryResourceSend[]
+  createdAt       DateTime            @default(now())
+
+  @@unique([resourceId, versionNumber])
+  @@index([resourceId, isCurrent])
+}
+
+model ResourceExtraction {
+  id                String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  resourceVersionId String @db.Uuid            @unique
+  status            ExtractionStatus  @default(PENDING)
+  rawText           String?
+  cleanText         String?
+  summary           String?
+  detectedLanguage  String?
+  errorMessage      String?
+  extractedAt       DateTime?
+  resourceVersion   ResourceVersion   @relation(fields: [resourceVersionId], references: [id], onDelete: Cascade)
+  chunks            ResourceChunk[]
+  createdAt         DateTime          @default(now())
+  updatedAt         DateTime          @updatedAt
+}
+
+model ResourceChunk {
+  id           String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  extractionId String @db.Uuid
+  chunkIndex   Int
+  content      String
+  pageFrom     Int?
+  pageTo       Int?
+  metadata     Json?
+  extraction   ResourceExtraction  @relation(fields: [extractionId], references: [id], onDelete: Cascade)
+  createdAt    DateTime            @default(now())
+
+  @@unique([extractionId, chunkIndex])
+}
+
+model Contact {
+  id            String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  waId          String?         @unique
+  firstName     String?
+  lastName      String?
+  email         String?
+  phone         String?
+  city          String?
+  notes         String?
+  conversations Conversation[]
+  inquiries     Inquiry[]
+  createdAt     DateTime        @default(now())
+  updatedAt     DateTime        @updatedAt
+}
+
+model Conversation {
+  id             String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  contactId      String? @db.Uuid
+  channel        Channel            @default(WHATSAPP)
+  status         ConversationStatus @default(OPEN)
+  currentStage   ConversationStage  @default(START)
+  contextJson    Json?
+  lastMessageAt  DateTime?
+  contact        Contact?           @relation(fields: [contactId], references: [id])
+  messages       Message[]
+  inquiries      Inquiry[]
+  conciergeTurns ConciergeTurn[]
+  createdAt      DateTime           @default(now())
+  updatedAt      DateTime           @updatedAt
+
+  @@index([contactId, status])
+}
+
+model Message {
+  id                   String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  conversationId       String @db.Uuid
+  direction            MessageDirection
+  text                 String
+  mediaUrl             String?
+  providerMessageId    String?          @unique
+  metadata             Json?
+  conversation         Conversation     @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  conciergeTurnInputs  ConciergeTurn[]  @relation("ConciergeTurnIncomingMessage")
+  createdAt            DateTime         @default(now())
+
+  @@index([conversationId, createdAt])
+}
+
+model Inquiry {
+  id                  String                  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  conversationId      String @db.Uuid
+  contactId           String? @db.Uuid
+  countryId           String? @db.Uuid
+  familyId            String? @db.Uuid
+  programId           String? @db.Uuid
+  studentAge          Int?
+  cityOfResidence     String?
+  preferredStartMonth Int?
+  preferredStartYear  Int?
+  accommodationTypeId String? @db.Uuid
+  weeks               Int?
+  status              InquiryStatus           @default(OPEN)
+  notes               String?
+  qualificationJson   Json?
+  conversation        Conversation            @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  contact             Contact?                @relation(fields: [contactId], references: [id])
+  country             Country?                @relation(fields: [countryId], references: [id])
+  family              ProductFamily?          @relation(fields: [familyId], references: [id])
+  program             Program?                @relation(fields: [programId], references: [id])
+  accommodationType   AccommodationType?      @relation(fields: [accommodationTypeId], references: [id])
+  recommendations     InquiryRecommendation[]
+  resourceSends       InquiryResourceSend[]
+  conciergeTurns      ConciergeTurn[]
+  createdAt           DateTime                @default(now())
+  updatedAt           DateTime                @updatedAt
+
+  @@index([conversationId, status])
+  @@index([countryId, familyId, studentAge])
+}
+
+model InquiryRecommendation {
+  id         String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  inquiryId  String @db.Uuid
+  programId  String @db.Uuid
+  resourceId String? @db.Uuid
+  reason     String?
+  confidence Float?
+  inquiry    Inquiry   @relation(fields: [inquiryId], references: [id], onDelete: Cascade)
+  program    Program   @relation(fields: [programId], references: [id])
+  resource   Resource? @relation(fields: [resourceId], references: [id])
+  createdAt  DateTime  @default(now())
+
+  @@index([inquiryId, createdAt])
+}
+
+model InquiryResourceSend {
+  id                String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  inquiryId         String @db.Uuid
+  resourceId        String @db.Uuid
+  resourceVersionId String? @db.Uuid
+  sentReason        String?
+  inquiry           Inquiry          @relation(fields: [inquiryId], references: [id], onDelete: Cascade)
+  resource          Resource         @relation(fields: [resourceId], references: [id])
+  resourceVersion   ResourceVersion? @relation(fields: [resourceVersionId], references: [id])
+  sentAt            DateTime         @default(now())
+
+  @@index([inquiryId, sentAt])
+}
+
+model ConciergeTurn {
+  id                  String                  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  conversationId      String @db.Uuid
+  inquiryId           String? @db.Uuid
+  incomingMessageId   String? @db.Uuid
+  responseId          String?
+  model               String
+  promptVersion       String
+  status              ConciergeTurnStatus     @default(STARTED)
+  inputJson           Json
+  rawResponseText     String?
+  structuredResponseJson Json?
+  errorMessage        String?
+  conversation        Conversation            @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  inquiry             Inquiry?                @relation(fields: [inquiryId], references: [id], onDelete: SetNull)
+  incomingMessage     Message?                @relation("ConciergeTurnIncomingMessage", fields: [incomingMessageId], references: [id], onDelete: SetNull)
+  toolCalls           ConciergeToolCall[]
+  startedAt           DateTime                @default(now())
+  finishedAt          DateTime?
+
+  @@index([conversationId, startedAt])
+  @@index([inquiryId, startedAt])
+  @@index([status, startedAt])
+}
+
+model ConciergeToolCall {
+  id           String                   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  turnId       String @db.Uuid
+  callId       String
+  toolName     String
+  status       ConciergeToolCallStatus  @default(STARTED)
+  argumentsJson Json?
+  outputJson   Json?
+  errorMessage String?
+  turn         ConciergeTurn            @relation(fields: [turnId], references: [id], onDelete: Cascade)
+  startedAt    DateTime                 @default(now())
+  finishedAt   DateTime?
+
+  @@unique([turnId, callId])
+  @@index([turnId, startedAt])
+}
