@@ -31,6 +31,7 @@ export const listCatalogRecommendationsQuerySchema = z
   .object({
     countryCode: z.preprocess(getFirstQueryValue, z.string().trim().min(2).max(3)),
     familyKey: z.preprocess(getFirstQueryValue, z.enum(FAMILY_KEYS).optional()),
+    locationSlug: optionalTrimmedStringSchema,
     studentAge: optionalIntSchema,
     accommodationKey: z.preprocess(getFirstQueryValue, z.enum(ACCOMMODATION_KEYS).optional()),
     preferredStartMonth: optionalIntSchema,

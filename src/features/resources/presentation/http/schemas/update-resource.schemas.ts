@@ -30,6 +30,7 @@ export const updateResourceBodySchema = z
     countryCode: optionalTrimmedStringSchema,
     familyKey: z.enum(FAMILY_KEYS).optional(),
     programSlug: nullableTrimmedStringSchema,
+    locationSlug: nullableTrimmedStringSchema,
     type: z.enum(RESOURCE_TYPES).optional(),
     title: optionalTrimmedStringSchema,
     description: nullableTrimmedStringSchema,
@@ -60,6 +61,7 @@ export const updateResourceBodySchema = z
     countryCode: value.countryCode?.toUpperCase(),
     title: value.title?.trim(),
     programSlug: value.programSlug ?? undefined,
+    locationSlug: value.locationSlug ?? undefined,
     updatedById: value.updatedById ?? null,
   }));
 

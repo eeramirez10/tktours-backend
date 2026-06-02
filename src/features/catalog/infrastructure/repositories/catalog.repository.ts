@@ -8,9 +8,11 @@ import type {
   CatalogFamily,
   CatalogProgram,
   CatalogProgramDetail,
+  CatalogProgramLocation,
   CatalogProgramRecommendation,
   CatalogProgramRecommendationQuery,
   CatalogResourceSummary,
+  ListCatalogLocationsQuery,
   ListCatalogProgramsQuery,
 } from '../../domain/types/catalog.types.js';
 
@@ -38,6 +40,24 @@ const programSelect = {
       active: true,
     },
   },
+  location: {
+    select: {
+      id: true,
+      slug: true,
+      name: true,
+      venueName: true,
+      description: true,
+      active: true,
+      country: {
+        select: {
+          id: true,
+          code: true,
+          name: true,
+          active: true,
+        },
+      },
+    },
+  },
   rule: {
     select: {
       quoteMode: true,
@@ -46,6 +66,18 @@ const programSelect = {
       allowsMiniStay: true,
       miniStayGroupOnly: true,
       notes: true,
+    },
+  },
+  prices: {
+    where: { active: true },
+    orderBy: [{ year: 'desc' }, { amountFrom: 'asc' }],
+    select: {
+      currency: true,
+      amountFrom: true,
+      amountTo: true,
+      priceLabel: true,
+      notes: true,
+      year: true,
     },
   },
   accommodations: {
@@ -123,12 +155,21 @@ function mapProgram(program: ProgramRecord): CatalogProgramDetail {
     active: program.active,
     country: program.country,
     family: program.family,
+    location: program.location,
     quoteMode: program.rule?.quoteMode ?? null,
     minWeeks: program.rule?.minWeeks ?? null,
     maxWeeks: program.rule?.maxWeeks ?? null,
     allowsMiniStay: program.rule?.allowsMiniStay ?? false,
     miniStayGroupOnly: program.rule?.miniStayGroupOnly ?? false,
     ruleNotes: program.rule?.notes ?? null,
+    prices: program.prices.map((price) => ({
+      currency: price.currency,
+      amountFrom: price.amountFrom?.toString() ?? null,
+      amountTo: price.amountTo?.toString() ?? null,
+      priceLabel: price.priceLabel,
+      notes: price.notes,
+      year: price.year,
+    })),
     accommodations: program.accommodations.map((accommodation) => ({
       key: accommodation.accommodationType.key,
       name: accommodation.accommodationType.name,
@@ -171,12 +212,50 @@ export class CatalogRepository implements CatalogReadRepository {
     });
   }
 
+  async findLocations(query: ListCatalogLocationsQuery): Promise<CatalogProgramLocation[]> {
+    return prisma.programLocation.findMany({
+      where: {
+        ...(query.activeOnly ? { active: true } : {}),
+        ...(query.countryCode ? { country: { code: query.countryCode } } : {}),
+        ...(query.familyKey ? { programs: { some: { active: true, family: { key: query.familyKey } } } } : {}),
+        ...(query.search
+          ? {
+              OR: [
+                { name: { contains: query.search, mode: 'insensitive' } },
+                { slug: { contains: query.search, mode: 'insensitive' } },
+                { venueName: { contains: query.search, mode: 'insensitive' } },
+                { description: { contains: query.search, mode: 'insensitive' } },
+              ],
+            }
+          : {}),
+      },
+      orderBy: [{ country: { name: 'asc' } }, { name: 'asc' }],
+      select: {
+        id: true,
+        slug: true,
+        name: true,
+        venueName: true,
+        description: true,
+        active: true,
+        country: {
+          select: {
+            id: true,
+            code: true,
+            name: true,
+            active: true,
+          },
+        },
+      },
+    });
+  }
+
   async findPrograms(query: ListCatalogProgramsQuery): Promise<CatalogProgram[]> {
     const programs: ProgramRecord[] = await prisma.program.findMany({
       where: {
         ...(query.activeOnly ? { active: true } : {}),
         ...(query.countryCode ? { country: { code: query.countryCode } } : {}),
         ...(query.familyKey ? { family: { key: query.familyKey } } : {}),
+        ...(query.locationSlug ? { location: { slug: query.locationSlug } } : {}),
         ...(query.search
           ? {
               OR: [
@@ -209,6 +288,7 @@ export class CatalogRepository implements CatalogReadRepository {
         active: true,
         country: { code: query.countryCode },
         ...(query.familyKey ? { family: { key: query.familyKey } } : {}),
+        ...(query.locationSlug ? { location: { slug: query.locationSlug } } : {}),
         ...(query.search
           ? {
               OR: [

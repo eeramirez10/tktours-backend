@@ -11,7 +11,9 @@ import {
   GetProgramDetailArgs,
   ListAvailableAccommodationsArgs,
   ListAvailableCountriesArgs,
+  ListAvailableLocationsArgs,
   ListAvailableProgramsArgs,
+  ListAvailableResourcesArgs,
   ListWeeksOptionsArgs,
   UpdateInquiryArgs,
 } from '../../domain/types/concierge-tool.types.js';
@@ -107,8 +109,12 @@ export class ConciergeToolExecutorService {
         return this.getProgramDetail(args as GetProgramDetailArgs);
       case 'list_available_countries':
         return this.listAvailableCountries(args as ListAvailableCountriesArgs);
+      case 'list_available_locations':
+        return this.listAvailableLocations(args as ListAvailableLocationsArgs);
       case 'list_available_programs':
         return this.listAvailablePrograms(args as ListAvailableProgramsArgs);
+      case 'list_available_resources':
+        return this.listAvailableResources(args as ListAvailableResourcesArgs);
       case 'list_available_accommodations':
         return this.listAvailableAccommodations(args as ListAvailableAccommodationsArgs);
       case 'list_weeks_options':
@@ -445,6 +451,7 @@ export class ConciergeToolExecutorService {
       activeOnly: args.activeOnly ?? true,
       countryCode: args.countryCode,
       familyKey: args.familyKey,
+      locationSlug: args.locationSlug,
     });
 
     return {
@@ -455,10 +462,108 @@ export class ConciergeToolExecutorService {
         familyName: program.family.name,
         countryCode: program.country.code,
         countryName: this.toSpanishCountryName(program.country.code, program.country.name),
+        locationSlug: program.location?.slug ?? null,
+        locationName: program.location?.name ?? null,
+        venueName: program.location?.venueName ?? null,
         minAge: program.minAge,
         maxAge: program.maxAge,
         minWeeks: program.minWeeks,
         maxWeeks: program.maxWeeks,
+        prices: program.prices,
+      })),
+    };
+  }
+
+  private async listAvailableLocations(args: ListAvailableLocationsArgs) {
+    const locations = await this.catalogRepository.findLocations({
+      activeOnly: args.activeOnly ?? true,
+      countryCode: args.countryCode,
+      familyKey: args.familyKey,
+    });
+
+    return {
+      countryCode: args.countryCode ?? null,
+      familyKey: args.familyKey ?? null,
+      locations: locations.map((location) => ({
+        slug: location.slug,
+        name: location.name,
+        venueName: location.venueName,
+        description: location.description,
+        countryCode: location.country.code,
+        countryName: this.toSpanishCountryName(location.country.code, location.country.name),
+      })),
+    };
+  }
+
+  private async listAvailableResources(args: ListAvailableResourcesArgs) {
+    const resources = await prisma.resource.findMany({
+      where: {
+        ...((args.activeOnly ?? true) ? { active: true } : {}),
+        ...(args.countryCode ? { country: { code: args.countryCode } } : {}),
+        ...(args.familyKey ? { family: { key: args.familyKey } } : {}),
+        ...(args.locationSlug ? { location: { slug: args.locationSlug } } : {}),
+        ...(args.programSlug ? { program: { slug: args.programSlug } } : {}),
+        ...(args.type ? { type: args.type } : {}),
+      },
+      orderBy: [{ year: 'desc' }, { month: 'desc' }, { title: 'asc' }],
+      select: {
+        id: true,
+        title: true,
+        type: true,
+        description: true,
+        month: true,
+        year: true,
+        country: { select: { code: true, name: true } },
+        family: { select: { key: true, name: true } },
+        location: { select: { slug: true, name: true, venueName: true } },
+        program: { select: { slug: true, name: true } },
+        versions: {
+          where: { isCurrent: true },
+          take: 1,
+          orderBy: { versionNumber: 'desc' },
+          select: {
+            id: true,
+            fileName: true,
+            fileUrl: true,
+            mimeType: true,
+            extraction: {
+              select: {
+                status: true,
+                summary: true,
+              },
+            },
+          },
+        },
+      },
+    });
+
+    return {
+      resources: resources.map((resource) => ({
+        id: resource.id,
+        title: resource.title,
+        type: resource.type,
+        description: resource.description,
+        month: resource.month,
+        year: resource.year,
+        countryCode: resource.country.code,
+        countryName: this.toSpanishCountryName(resource.country.code, resource.country.name),
+        familyKey: resource.family?.key ?? null,
+        familyName: resource.family?.name ?? null,
+        locationSlug: resource.location?.slug ?? null,
+        locationName: resource.location?.name ?? null,
+        venueName: resource.location?.venueName ?? null,
+        programSlug: resource.program?.slug ?? null,
+        programName: resource.program?.name ?? null,
+        currentVersion: resource.versions[0]
+          ? {
+              id: resource.versions[0].id,
+              fileName: resource.versions[0].fileName,
+              fileUrl: resource.versions[0].fileUrl,
+              mimeType: resource.versions[0].mimeType,
+              extractionStatus: resource.versions[0].extraction?.status ?? null,
+              summary: resource.versions[0].extraction?.summary ?? null,
+            }
+          : null,
       })),
     };
   }
@@ -568,6 +673,7 @@ export class ConciergeToolExecutorService {
       inquiryId: args.inquiryId,
       countryCode: args.countryCode,
       familyKey: args.familyKey,
+      locationSlug: args.locationSlug,
       programSlug: args.programSlug,
       studentAge: args.studentAge,
       cityOfResidence: args.cityOfResidence,

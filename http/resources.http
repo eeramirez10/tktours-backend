@@ -1,6 +1,9 @@
 @baseUrl = http://localhost:3000
 @resourceId = cmp5vxnit00019ynb3h5f7uzs
 @versionId = replace-me
+# IMPORTANT: replace this with a real existing PDF absolute path before running upload requests.
+# If the path is invalid or the content is not a real PDF, the API should reject it.
+@pdfPath = /Users/eeramirez/Downloads/replace-with-real-folleto.pdf
 
 ### Service health
 GET {{baseUrl}}/health
@@ -34,6 +37,10 @@ Accept: application/json
 GET {{baseUrl}}/api/resources?programSlug=canada-summer-camp
 Accept: application/json
 
+### Resources - by location/city slug
+GET {{baseUrl}}/api/resources?countryCode=IT&familyKey=CAMP&locationSlug=milan&type=BROCHURE
+Accept: application/json
+
 ### Resources - search
 GET {{baseUrl}}/api/resources?search=canada
 Accept: application/json
@@ -49,6 +56,100 @@ Accept: application/json
 ### Resource by id
 GET {{baseUrl}}/api/resources/{{resourceId}}
 Accept: application/json
+
+### Upload PDF - camp by country/city/venue
+# Replace @pdfPath with an absolute local path, e.g.
+# @pdfPath = /Users/eeramirez/Downloads/camp-milan-ac-milan.pdf
+POST {{baseUrl}}/api/resources/upload
+Accept: application/json
+Content-Type: multipart/form-data; boundary=----TKToursBoundary
+
+------TKToursBoundary
+Content-Disposition: form-data; name="file"; filename="camp-milan-ac-milan.pdf"
+Content-Type: application/pdf
+
+< {{pdfPath}}
+------TKToursBoundary
+Content-Disposition: form-data; name="countryCode"
+
+IT
+------TKToursBoundary
+Content-Disposition: form-data; name="familyKey"
+
+CAMP
+------TKToursBoundary
+Content-Disposition: form-data; name="type"
+
+BROCHURE
+------TKToursBoundary
+Content-Disposition: form-data; name="title"
+
+Campamento Milán AC Milan 2026
+------TKToursBoundary
+Content-Disposition: form-data; name="description"
+
+Folleto del campamento en Milán, Italia.
+------TKToursBoundary
+Content-Disposition: form-data; name="locationName"
+
+Milán
+------TKToursBoundary
+Content-Disposition: form-data; name="locationVenueName"
+
+AC Milan
+------TKToursBoundary
+Content-Disposition: form-data; name="year"
+
+2026
+------TKToursBoundary
+Content-Disposition: form-data; name="extractText"
+
+true
+------TKToursBoundary--
+
+### Upload PDF - language course by country/city
+POST {{baseUrl}}/api/resources/upload
+Accept: application/json
+Content-Type: multipart/form-data; boundary=----TKToursBoundary
+
+------TKToursBoundary
+Content-Disposition: form-data; name="file"; filename="curso-montreal-canada.pdf"
+Content-Type: application/pdf
+
+< {{pdfPath}}
+------TKToursBoundary
+Content-Disposition: form-data; name="countryCode"
+
+CA
+------TKToursBoundary
+Content-Disposition: form-data; name="familyKey"
+
+LANGUAGE_COURSE
+------TKToursBoundary
+Content-Disposition: form-data; name="type"
+
+PRESENTATION
+------TKToursBoundary
+Content-Disposition: form-data; name="title"
+
+Curso de idiomas Montreal Canadá 2026
+------TKToursBoundary
+Content-Disposition: form-data; name="description"
+
+Presentación del curso de idiomas en Montreal.
+------TKToursBoundary
+Content-Disposition: form-data; name="locationName"
+
+Montreal
+------TKToursBoundary
+Content-Disposition: form-data; name="year"
+
+2026
+------TKToursBoundary
+Content-Disposition: form-data; name="extractText"
+
+true
+------TKToursBoundary--
 
 ### Create resource - metadata only
 POST {{baseUrl}}/api/resources
@@ -83,6 +184,29 @@ Accept: application/json
     "fileName": "canada-summer-camp-brochure-2026.pdf",
     "mimeType": "application/pdf",
     "externalUrl": "https://example.com/canada-summer-camp-brochure-2026.pdf"
+  }
+}
+
+### Create resource - with city/location metadata and external version
+POST {{baseUrl}}/api/resources
+Content-Type: application/json
+Accept: application/json
+
+{
+  "countryCode": "IT",
+  "familyKey": "CAMP",
+  "locationName": "Milán",
+  "locationVenueName": "AC Milan",
+  "type": "BROCHURE",
+  "title": "Campamento Milán AC Milan 2026",
+  "description": "Folleto externo del campamento en Milán",
+  "year": 2026,
+  "active": true,
+  "initialVersion": {
+    "sourceType": "EXTERNAL_LINK",
+    "fileName": "camp-milan-ac-milan-2026.pdf",
+    "mimeType": "application/pdf",
+    "externalUrl": "https://example.com/camp-milan-ac-milan-2026.pdf"
   }
 }
 
@@ -144,6 +268,10 @@ Accept: application/json
 ### Download a stored/uploaded version
 GET {{baseUrl}}/api/resources/{{resourceId}}/versions/{{versionId}}/download
 Accept: application/octet-stream
+
+### Extract/retry PDF text extraction for a version
+POST {{baseUrl}}/api/resources/{{resourceId}}/versions/{{versionId}}/extract
+Accept: application/json
 
 ### Delete resource permanently
 DELETE {{baseUrl}}/api/resources/{{resourceId}}

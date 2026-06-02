@@ -44,13 +44,15 @@ export const listResourcesQuerySchema = z
     familyKey: z.preprocess(getFirstQueryValue, z.enum(FAMILY_KEYS).optional()),
     type: z.preprocess(getFirstQueryValue, z.enum(RESOURCE_TYPES).optional()),
     programSlug: optionalTrimmedStringSchema,
+    locationSlug: optionalTrimmedStringSchema,
     search: optionalTrimmedStringSchema,
   })
-  .transform(({ active, countryCode, familyKey, type, programSlug, search }) => ({
+  .transform(({ active, countryCode, familyKey, type, programSlug, locationSlug, search }) => ({
     activeOnly: active ?? true,
     countryCode: countryCode?.toUpperCase(),
     familyKey,
     type,
     programSlug,
+    locationSlug,
     search,
   }));

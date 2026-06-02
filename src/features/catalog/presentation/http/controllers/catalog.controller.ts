@@ -6,12 +6,14 @@ import { GetCatalogHealthUseCase } from '../../../application/use-cases/get-cata
 import { GetCatalogProgramBySlugUseCase } from '../../../application/use-cases/get-catalog-program-by-slug.use-case.js';
 import { ListCatalogCountriesUseCase } from '../../../application/use-cases/list-catalog-countries.use-case.js';
 import { ListCatalogFamiliesUseCase } from '../../../application/use-cases/list-catalog-families.use-case.js';
+import { ListCatalogLocationsUseCase } from '../../../application/use-cases/list-catalog-locations.use-case.js';
 import { ListCatalogProgramsUseCase } from '../../../application/use-cases/list-catalog-programs.use-case.js';
 import { ListCatalogRecommendedProgramsUseCase } from '../../../application/use-cases/list-catalog-recommended-programs.use-case.js';
 import { CatalogRepository } from '../../../infrastructure/repositories/catalog.repository.js';
 import { catalogProgramSlugParamsSchema } from '../schemas/catalog-params.schemas.js';
 import {
   listCatalogCollectionQuerySchema,
+  listCatalogLocationsQuerySchema,
   listCatalogProgramsQuerySchema,
 } from '../schemas/catalog-query.schemas.js';
 import { listCatalogRecommendationsQuerySchema } from '../schemas/catalog-recommendations-query.schemas.js';
@@ -20,6 +22,7 @@ const catalogRepository = new CatalogRepository();
 const getCatalogHealthUseCase = new GetCatalogHealthUseCase();
 const listCatalogCountriesUseCase = new ListCatalogCountriesUseCase(catalogRepository);
 const listCatalogFamiliesUseCase = new ListCatalogFamiliesUseCase(catalogRepository);
+const listCatalogLocationsUseCase = new ListCatalogLocationsUseCase(catalogRepository);
 const listCatalogProgramsUseCase = new ListCatalogProgramsUseCase(catalogRepository);
 const getCatalogProgramBySlugUseCase = new GetCatalogProgramBySlugUseCase(catalogRepository);
 const listCatalogRecommendedProgramsUseCase = new ListCatalogRecommendedProgramsUseCase(catalogRepository);
@@ -50,6 +53,16 @@ export class CatalogController {
       return res.json({ ok: true, data });
     } catch (error) {
       return next(error instanceof ZodError ? toValidationError(error, 'Invalid families query') : error);
+    }
+  }
+
+  async listLocations(req: Request, res: Response, next: NextFunction) {
+    try {
+      const query = listCatalogLocationsQuerySchema.parse(req.query);
+      const data = await listCatalogLocationsUseCase.execute(query);
+      return res.json({ ok: true, data });
+    } catch (error) {
+      return next(error instanceof ZodError ? toValidationError(error, 'Invalid locations query') : error);
     }
   }
 

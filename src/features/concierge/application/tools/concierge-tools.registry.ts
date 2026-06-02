@@ -88,9 +88,54 @@ export const conciergeTools = [
       additionalProperties: false,
       properties: {
         countryCode: { type: 'string' },
+        locationSlug: { type: 'string' },
         familyKey: {
           type: 'string',
           enum: ['CAMP', 'LANGUAGE_COURSE', 'SCHOOL_PROGRAM'],
+        },
+        activeOnly: { type: 'boolean' },
+      },
+      required: [],
+    },
+  },
+  {
+    type: 'function',
+    name: 'list_available_locations',
+    description:
+      'List active destination cities/locations available in the catalog, optionally filtered by country and program family.',
+    parameters: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        countryCode: { type: 'string' },
+        familyKey: {
+          type: 'string',
+          enum: ['CAMP', 'LANGUAGE_COURSE', 'SCHOOL_PROGRAM'],
+        },
+        activeOnly: { type: 'boolean' },
+      },
+      required: [],
+    },
+  },
+  {
+    type: 'function',
+    name: 'list_available_resources',
+    description:
+      'List active PDFs/resources such as brochures, presentations or manuals for a country, city/location, program family, or program.',
+    parameters: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        countryCode: { type: 'string' },
+        familyKey: {
+          type: 'string',
+          enum: ['CAMP', 'LANGUAGE_COURSE', 'SCHOOL_PROGRAM'],
+        },
+        locationSlug: { type: 'string' },
+        programSlug: { type: 'string' },
+        type: {
+          type: 'string',
+          enum: ['QUOTE', 'INFO', 'BROCHURE', 'MANUAL', 'PRESENTATION'],
         },
         activeOnly: { type: 'boolean' },
       },
@@ -268,6 +313,7 @@ export const conciergeTools = [
           enum: ['CAMP', 'LANGUAGE_COURSE', 'SCHOOL_PROGRAM'],
         },
         programSlug: { type: 'string' },
+        locationSlug: { type: 'string' },
         studentAge: { type: 'number' },
         cityOfResidence: { type: 'string' },
         preferredStartMonth: { type: 'number' },

@@ -49,6 +49,10 @@ export const createResourceBodySchema = z
     countryCode: z.string().trim().min(2).max(3),
     familyKey: z.enum(FAMILY_KEYS).optional(),
     programSlug: optionalTrimmedStringSchema,
+    locationSlug: optionalTrimmedStringSchema,
+    locationName: optionalTrimmedStringSchema,
+    locationVenueName: optionalNullableTrimmedStringSchema,
+    locationDescription: optionalNullableTrimmedStringSchema,
     type: z.enum(RESOURCE_TYPES),
     title: z.string().trim().min(1).max(255),
     description: optionalNullableTrimmedStringSchema,
@@ -67,10 +71,30 @@ export const createResourceBodySchema = z
       });
     }
   })
-  .transform(({ countryCode, familyKey, programSlug, type, title, description, month, year, active, createdById, initialVersion }) => ({
+  .transform(({
+    countryCode,
+    familyKey,
+    programSlug,
+    locationSlug,
+    locationName,
+    locationVenueName,
+    locationDescription,
+    type,
+    title,
+    description,
+    month,
+    year,
+    active,
+    createdById,
+    initialVersion,
+  }) => ({
     countryCode: countryCode.trim().toUpperCase(),
     familyKey,
     programSlug,
+    locationSlug,
+    locationName,
+    locationVenueName: locationVenueName ?? null,
+    locationDescription: locationDescription ?? null,
     type,
     title: title.trim(),
     description: description ?? null,

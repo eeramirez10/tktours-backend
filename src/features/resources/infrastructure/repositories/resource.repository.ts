@@ -1,6 +1,7 @@
 import { Prisma, ResourceSourceType } from '@prisma/client';
 import { randomUUID } from 'node:crypto';
 
+import { env } from '../../../../shared/config/env.js';
 import { ConflictAppError, NotFoundAppError, ValidationAppError } from '../../../../shared/domain/errors/app-error.js';
 import { prisma } from '../../../../shared/infrastructure/database/prisma.js';
 import type { ResourceReadRepository } from '../../domain/repositories/resource-read.repository.js';
@@ -32,6 +33,7 @@ const listSelect = {
   country: { select: { id: true, code: true, name: true } },
   family: { select: { id: true, key: true, name: true } },
   program: { select: { id: true, slug: true, name: true } },
+  location: { select: { id: true, slug: true, name: true, venueName: true, description: true } },
   versions: {
     where: { isCurrent: true },
     orderBy: { versionNumber: 'desc' },
@@ -95,7 +97,22 @@ type ResolvedRelations = {
   countryId: string;
   familyId: string | null;
   programId: string | null;
+  locationId: string | null;
 };
+
+function toPublicUrl(pathOrUrl: string): string {
+  if (/^https?:\/\//i.test(pathOrUrl)) {
+    return pathOrUrl;
+  }
+
+  const baseUrl = env.PUBLIC_BASE_URL?.trim().replace(/\/+$/, '');
+  if (!baseUrl) {
+    return pathOrUrl;
+  }
+
+  const relative = pathOrUrl.startsWith('/') ? pathOrUrl : `/${pathOrUrl}`;
+  return `${baseUrl}${relative}`;
+}
 
 function mapExtraction(extraction: ResourceListRecord['versions'][number]['extraction'] | null): ResourceCurrentExtraction | null {
   if (!extraction) {
@@ -159,6 +176,7 @@ function mapListResource(resource: ResourceListRecord): ResourceListItem {
     country: resource.country,
     family: resource.family,
     program: resource.program,
+    location: resource.location,
     currentVersion: mapCurrentVersion(currentVersion),
     currentExtraction: mapExtraction(currentVersion?.extraction ?? null),
     createdAt: resource.createdAt,
@@ -183,12 +201,15 @@ export class ResourceRepository implements ResourceReadRepository {
       ...(query.countryCode ? { country: { code: query.countryCode } } : {}),
       ...(query.familyKey ? { family: { key: query.familyKey } } : {}),
       ...(query.programSlug ? { program: { slug: query.programSlug } } : {}),
+      ...(query.locationSlug ? { location: { slug: query.locationSlug } } : {}),
       ...(query.search
         ? {
             OR: [
               { title: { contains: query.search, mode: 'insensitive' } },
               { description: { contains: query.search, mode: 'insensitive' } },
               { program: { name: { contains: query.search, mode: 'insensitive' } } },
+              { location: { name: { contains: query.search, mode: 'insensitive' } } },
+              { location: { venueName: { contains: query.search, mode: 'insensitive' } } },
             ],
           }
         : {}),
@@ -220,6 +241,7 @@ export class ResourceRepository implements ResourceReadRepository {
         countryId: relations.countryId,
         familyId: relations.familyId,
         programId: relations.programId,
+        locationId: relations.locationId,
         type: input.type,
         title: input.title,
         description: input.description,
@@ -251,6 +273,7 @@ export class ResourceRepository implements ResourceReadRepository {
         country: { select: { code: true } },
         family: { select: { key: true } },
         program: { select: { slug: true } },
+        location: { select: { slug: true } },
       },
     });
 
@@ -263,11 +286,15 @@ export class ResourceRepository implements ResourceReadRepository {
     const nextProgramSlug = Object.prototype.hasOwnProperty.call(input, 'programSlug')
       ? input.programSlug ?? undefined
       : current.program?.slug;
+    const nextLocationSlug = Object.prototype.hasOwnProperty.call(input, 'locationSlug')
+      ? input.locationSlug ?? undefined
+      : current.location?.slug;
 
     const relations = await this.resolveRelations({
       countryCode: nextCountryCode,
       familyKey: nextFamilyKey,
       programSlug: nextProgramSlug,
+      locationSlug: nextLocationSlug,
     });
 
     const updated = await prisma.resource.update({
@@ -276,6 +303,7 @@ export class ResourceRepository implements ResourceReadRepository {
         countryId: relations.countryId,
         familyId: relations.familyId,
         programId: relations.programId,
+        locationId: relations.locationId,
         ...(input.type !== undefined ? { type: input.type } : {}),
         ...(input.title !== undefined ? { title: input.title } : {}),
         ...(input.description !== undefined ? { description: input.description } : {}),
@@ -346,7 +374,7 @@ export class ResourceRepository implements ResourceReadRepository {
         fileName: input.version.fileName,
         content,
       });
-      fileUrl = `/api/resources/${input.resourceId}/versions/${versionId}/download`;
+      fileUrl = toPublicUrl(`/api/resources/${input.resourceId}/versions/${versionId}/download`);
     } else {
       storageProvider = 'EXTERNAL';
       fileUrl = input.version.externalUrl;
@@ -450,6 +478,10 @@ export class ResourceRepository implements ResourceReadRepository {
     countryCode: string;
     familyKey?: string;
     programSlug?: string;
+    locationSlug?: string;
+    locationName?: string;
+    locationVenueName?: string | null;
+    locationDescription?: string | null;
   }): Promise<ResolvedRelations> {
     const country = await prisma.country.findUnique({
       where: { code: input.countryCode },
@@ -471,6 +503,42 @@ export class ResourceRepository implements ResourceReadRepository {
       throw new NotFoundAppError(`Family not found for key ${input.familyKey}`);
     }
 
+    const requestedLocationSlug = input.locationSlug ?? (input.locationName ? this.slugify(input.locationName) : undefined);
+    if (input.locationName && !requestedLocationSlug) {
+      throw new ValidationAppError('locationName cannot be converted to a valid slug');
+    }
+    let location = requestedLocationSlug
+      ? await prisma.programLocation.findFirst({
+          where: {
+            slug: requestedLocationSlug,
+            countryId: country.id,
+          },
+          select: {
+            id: true,
+          },
+        })
+      : null;
+
+    if (requestedLocationSlug && !location && input.locationName) {
+      location = await prisma.programLocation.create({
+        data: {
+          countryId: country.id,
+          slug: requestedLocationSlug,
+          name: input.locationName.trim(),
+          venueName: input.locationVenueName ?? null,
+          description: input.locationDescription ?? null,
+          active: true,
+        },
+        select: {
+          id: true,
+        },
+      });
+    }
+
+    if (requestedLocationSlug && !location) {
+      throw new NotFoundAppError(`Location not found for slug ${requestedLocationSlug} in country ${input.countryCode}`);
+    }
+
     const program = input.programSlug
       ? await prisma.program.findFirst({
           where: {
@@ -480,6 +548,7 @@ export class ResourceRepository implements ResourceReadRepository {
           select: {
             id: true,
             familyId: true,
+            locationId: true,
           },
         })
       : null;
@@ -496,10 +565,15 @@ export class ResourceRepository implements ResourceReadRepository {
       throw new ValidationAppError('familyKey is required when programSlug is provided');
     }
 
+    if (program && location && program.locationId && program.locationId !== location.id) {
+      throw new ConflictAppError('Program does not belong to the provided location');
+    }
+
     return {
       countryId: country.id,
       familyId: family?.id ?? null,
       programId: program?.id ?? null,
+      locationId: location?.id ?? program?.locationId ?? null,
     };
   }
 
@@ -516,6 +590,16 @@ export class ResourceRepository implements ResourceReadRepository {
     } catch {
       throw new ValidationAppError('fileContentBase64 must be valid base64');
     }
+  }
+
+  private slugify(value: string): string {
+    return value
+      .trim()
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-+|-+$/g, '');
   }
 
   private isPrismaNotFound(error: unknown): boolean {

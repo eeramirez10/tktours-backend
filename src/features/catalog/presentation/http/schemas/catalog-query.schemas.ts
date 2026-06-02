@@ -49,6 +49,22 @@ export const listCatalogProgramsQuerySchema = z
     active: booleanQuerySchema,
     countryCode: optionalTrimmedStringSchema,
     familyKey: z.preprocess(getFirstQueryValue, z.enum(FAMILY_KEYS).optional()),
+    locationSlug: optionalTrimmedStringSchema,
+    search: optionalTrimmedStringSchema,
+  })
+  .transform(({ active, countryCode, familyKey, locationSlug, search }) => ({
+    activeOnly: active ?? true,
+    countryCode: countryCode?.toUpperCase(),
+    familyKey,
+    locationSlug,
+    search,
+  }));
+
+export const listCatalogLocationsQuerySchema = z
+  .object({
+    active: booleanQuerySchema,
+    countryCode: optionalTrimmedStringSchema,
+    familyKey: z.preprocess(getFirstQueryValue, z.enum(FAMILY_KEYS).optional()),
     search: optionalTrimmedStringSchema,
   })
   .transform(({ active, countryCode, familyKey, search }) => ({

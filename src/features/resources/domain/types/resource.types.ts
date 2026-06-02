@@ -14,6 +14,7 @@ export type ListResourcesQuery = {
   familyKey?: ResourceFamilyKey;
   type?: ResourceTypeKey;
   programSlug?: string;
+  locationSlug?: string;
   search?: string;
 };
 
@@ -26,6 +27,10 @@ export type ResourceBaseInput = {
   countryCode: string;
   familyKey?: ResourceFamilyKey;
   programSlug?: string;
+  locationSlug?: string;
+  locationName?: string;
+  locationVenueName?: string | null;
+  locationDescription?: string | null;
   type: ResourceTypeKey;
   title: string;
   description: string | null;
@@ -44,6 +49,7 @@ export type UpdateResourceInput = {
   countryCode?: string;
   familyKey?: ResourceFamilyKey;
   programSlug?: string | null;
+  locationSlug?: string | null;
   type?: ResourceTypeKey;
   title?: string;
   description?: string | null;
@@ -102,6 +108,14 @@ export type ResourceProgram = {
   name: string;
 };
 
+export type ResourceLocation = {
+  id: string;
+  slug: string;
+  name: string;
+  venueName: string | null;
+  description: string | null;
+};
+
 export type ResourceCurrentVersion = {
   id: string;
   versionNumber: number;
@@ -138,6 +152,7 @@ export type ResourceListItem = {
   country: ResourceCountry;
   family: ResourceFamily | null;
   program: ResourceProgram | null;
+  location: ResourceLocation | null;
   currentVersion: ResourceCurrentVersion | null;
   currentExtraction: ResourceCurrentExtraction | null;
   createdAt: Date;

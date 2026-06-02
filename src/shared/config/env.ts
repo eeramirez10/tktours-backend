@@ -6,6 +6,7 @@ const envSchema = z.object({
   LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent']).default('info'),
   DATABASE_URL: z.string().min(1).optional(),
   RESOURCES_STORAGE_DIR: z.string().min(1).default('./storage/resources'),
+  PUBLIC_BASE_URL: z.string().url().optional(),
   TWILIO_ACCOUNT_SID: z.string().min(1).optional(),
   TWILIO_AUTH_TOKEN: z.string().min(1).optional(),
   TWILIO_WHATSAPP_FROM: z.string().min(1).optional(),

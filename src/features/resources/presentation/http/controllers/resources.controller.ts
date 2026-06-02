@@ -1,8 +1,10 @@
 import { access } from 'node:fs/promises';
 import type { NextFunction, Request, Response } from 'express';
+import multer from 'multer';
 import { ZodError } from 'zod';
 
 import { NotFoundAppError, ValidationAppError } from '../../../../../shared/domain/errors/app-error.js';
+import { ResourceExtractionService } from '../../../application/services/resource-extraction.service.js';
 import { CreateResourceUseCase } from '../../../application/use-cases/create-resource.use-case.js';
 import { CreateResourceVersionUseCase } from '../../../application/use-cases/create-resource-version.use-case.js';
 import { DeleteResourceUseCase } from '../../../application/use-cases/delete-resource.use-case.js';
@@ -19,9 +21,11 @@ import { createResourceVersionBodySchema } from '../schemas/create-resource-vers
 import { resourceDownloadParamsSchema, resourceIdParamsSchema } from '../schemas/resource-params.schemas.js';
 import { listResourcesQuerySchema } from '../schemas/resources-query.schemas.js';
 import { setResourceActiveBodySchema, updateResourceBodySchema } from '../schemas/update-resource.schemas.js';
+import { uploadResourceBodySchema } from '../schemas/upload-resource.schemas.js';
 
 const resourceRepository = new ResourceRepository();
 const storageService = new LocalResourceStorageService();
+const extractionService = new ResourceExtractionService(storageService);
 const getResourcesHealthUseCase = new GetResourcesHealthUseCase();
 const listResourcesUseCase = new ListResourcesUseCase(resourceRepository);
 const getResourceByIdUseCase = new GetResourceByIdUseCase(resourceRepository);
@@ -35,6 +39,33 @@ const deleteResourceUseCase = new DeleteResourceUseCase(resourceRepository);
 function toValidationError(error: ZodError, message: string) {
   return new ValidationAppError(message, error.flatten());
 }
+
+function assertPdfContent(file: Express.Multer.File): void {
+  if (file.size <= 0 || file.buffer.length <= 0) {
+    throw new ValidationAppError('Uploaded PDF file is empty');
+  }
+
+  const header = file.buffer.subarray(0, 5).toString('ascii');
+  if (header !== '%PDF-') {
+    throw new ValidationAppError('Uploaded file content is not a valid PDF');
+  }
+}
+
+export const uploadResourcePdf = multer({
+  storage: multer.memoryStorage(),
+  limits: {
+    fileSize: 25 * 1024 * 1024,
+    files: 1,
+  },
+  fileFilter: (_req, file, callback) => {
+    const isPdf = file.mimetype === 'application/pdf' || file.originalname.toLowerCase().endsWith('.pdf');
+    if (!isPdf) {
+      callback(new ValidationAppError('Only PDF files are allowed'));
+      return;
+    }
+    callback(null, true);
+  },
+}).single('file');
 
 export class ResourcesController {
   getHealth(_req: Request, res: Response) {
@@ -78,6 +109,52 @@ export class ResourcesController {
       return res.status(201).json({ ok: true, data });
     } catch (error) {
       return next(error instanceof ZodError ? toValidationError(error, 'Invalid create resource body') : error);
+    }
+  }
+
+  async uploadResource(req: Request, res: Response, next: NextFunction) {
+    try {
+      if (!req.file) {
+        return next(new ValidationAppError('PDF file is required in field "file"'));
+      }
+
+      assertPdfContent(req.file);
+
+      const body = uploadResourceBodySchema.parse(req.body);
+      const data = await createResourceUseCase.execute({
+        countryCode: body.countryCode,
+        familyKey: body.familyKey,
+        programSlug: body.programSlug,
+        locationSlug: body.locationSlug,
+        locationName: body.locationName,
+        locationVenueName: body.locationVenueName,
+        locationDescription: body.locationDescription,
+        type: body.type,
+        title: body.title,
+        description: body.description,
+        month: body.month,
+        year: body.year,
+        active: body.active,
+        createdById: body.createdById,
+        initialVersion: {
+          sourceType: 'UPLOAD',
+          fileName: req.file.originalname,
+          mimeType: req.file.mimetype || 'application/pdf',
+          storageProvider: body.storageProvider,
+          fileContentBase64: req.file.buffer.toString('base64'),
+        },
+      });
+
+      const extraction = body.extractText ? await extractionService.extractCurrentVersion(data.id) : null;
+      const refreshed = await getResourceByIdUseCase.execute(data.id);
+
+      return res.status(201).json({
+        ok: true,
+        data: refreshed ?? data,
+        extraction,
+      });
+    } catch (error) {
+      return next(error instanceof ZodError ? toValidationError(error, 'Invalid upload resource body') : error);
     }
   }
 
@@ -148,6 +225,28 @@ export class ResourcesController {
       res.setHeader('Content-Disposition', `inline; filename="${download.fileName}"`);
 
       return res.sendFile(absolutePath);
+    } catch (error) {
+      return next(error instanceof ZodError ? toValidationError(error, 'Invalid resource version id') : error);
+    }
+  }
+
+  async extractVersion(req: Request, res: Response, next: NextFunction) {
+    try {
+      const { resourceId, versionId } = resourceDownloadParamsSchema.parse(req.params);
+      const download = await getResourceDownloadUseCase.execute(resourceId, versionId);
+
+      if (!download) {
+        return next(new NotFoundAppError('Resource version not found'));
+      }
+
+      const extraction = await extractionService.extractVersion(versionId);
+      const data = await getResourceByIdUseCase.execute(resourceId);
+
+      return res.json({
+        ok: true,
+        data,
+        extraction,
+      });
     } catch (error) {
       return next(error instanceof ZodError ? toValidationError(error, 'Invalid resource version id') : error);
     }

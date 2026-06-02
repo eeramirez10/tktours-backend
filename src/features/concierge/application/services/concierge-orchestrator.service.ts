@@ -1,4 +1,5 @@
 import { NotFoundAppError, ValidationAppError } from '../../../../shared/domain/errors/app-error.js';
+import { env } from '../../../../shared/config/env.js';
 import { prisma } from '../../../../shared/infrastructure/database/prisma.js';
 import { PrismaConversationRepository } from '../../../conversations/infrastructure/repositories/prisma-conversation.repository.js';
 import { RefreshInquiryRecommendationsUseCase } from '../../../inquiries/application/use-cases/refresh-inquiry-recommendations.use-case.js';
@@ -21,9 +22,33 @@ export type ConciergeTurnContext = {
   } | null;
 };
 
+type CampBrochureCandidate = {
+  resourceId: string;
+  resourceTitle: string;
+  countryCode: string;
+  countryName: string | null;
+  locationSlug: string | null;
+  locationName: string | null;
+  versionId: string;
+  fileName: string;
+  fileUrl: string;
+  mimeType: string | null;
+};
+
+type CampBrochureStateStatus = 'READY' | 'OFFERED' | 'SENT' | 'DECLINED' | 'UNAVAILABLE';
+
+type CampBrochureState = {
+  status: CampBrochureStateStatus;
+  candidate: CampBrochureCandidate | null;
+  checkedAt: string;
+  offeredAt: string | null;
+  sentAt: string | null;
+};
+
 export class ConciergeOrchestratorService {
   private readonly refreshInquiryRecommendationsUseCase: RefreshInquiryRecommendationsUseCase;
   private readonly conversationContextResponseKey = 'openaiResponses';
+  private readonly campBrochureContextKey = 'campBrochure';
 
   constructor(
     private readonly conversationRepository = new PrismaConversationRepository(),
@@ -154,10 +179,12 @@ export class ConciergeOrchestratorService {
         conversationId: params.conversationId,
         activeInquiryId: context.activeInquiry?.id ?? null,
         replyText: normalized.replyText,
+        mediaUrl: policyResult.outboundMediaUrl ?? null,
         nextStage: normalized.nextStage ?? null,
         shouldRefreshRecommendations: normalized.shouldRefreshRecommendations ?? false,
         responseId: finalResponseId,
         existingContextJson: context.conversation?.contextJson ?? null,
+        contextPatch: policyResult.contextPatch ?? null,
       });
 
       await this.turnTraceRepository.completeTurn({
@@ -400,6 +427,7 @@ export class ConciergeOrchestratorService {
 
   private buildModelInputPayload(context: ConciergeTurnContext): Record<string, unknown> {
     const recentMessages = context.conversation?.messages.slice(-20) ?? [];
+    const campBrochureState = this.getCampBrochureStateFromContext(context);
 
     return {
       conversation: {
@@ -409,6 +437,7 @@ export class ConciergeOrchestratorService {
         currentStage: context.conversation?.currentStage,
       },
       activeInquiry: context.activeInquiry,
+      campBrochureState,
       latestMessage: context.latestMessage,
       recentMessages: recentMessages.map((message) => ({
         id: message.id,
@@ -530,12 +559,17 @@ export class ConciergeOrchestratorService {
         | 'none';
       details?: Record<string, unknown>;
     };
+    contextPatch?: Record<string, unknown> | null;
+    outboundMediaUrl?: string | null;
   }> {
     const detectedIntent = await this.detectIntentWithTool(context);
     const policySignals = await this.evaluatePolicySignalsWithTool(context);
     context = await this.hydrateInquiryFamilyFromIntent(context, detectedIntent);
     const enforcedField = this.getEnforcedNextField(context.activeInquiry);
     const languageCourseAgeBlock = this.getLanguageCourseAgeBlock(context, detectedIntent);
+    const campBrochureStateResult = await this.resolveCampBrochureState(context);
+    const campBrochureState = campBrochureStateResult.state;
+    let contextPatch: Record<string, unknown> | null = campBrochureStateResult.contextPatch;
 
     if (languageCourseAgeBlock) {
       return {
@@ -554,6 +588,8 @@ export class ConciergeOrchestratorService {
             minAge: 15,
           },
         },
+        contextPatch,
+        outboundMediaUrl: null,
       };
     }
 
@@ -577,6 +613,8 @@ export class ConciergeOrchestratorService {
             reason: 'greeting_menu',
           },
         },
+        contextPatch,
+        outboundMediaUrl: null,
       };
     }
 
@@ -596,6 +634,7 @@ export class ConciergeOrchestratorService {
             reason: `advisor_handoff_${handoffStep}`,
           },
         },
+        contextPatch,
       };
     }
 
@@ -616,10 +655,106 @@ export class ConciergeOrchestratorService {
             confidence: policySignals.confidence,
           },
         },
+        contextPatch,
       };
     }
 
     const nextField = enforcedField ?? this.getFirstStillMissingField(parsed.missingFields, context.activeInquiry);
+    const brochureReplyAction = await this.resolveCampBrochureReplyAction(context, campBrochureState);
+
+    if (brochureReplyAction === 'SEND' && campBrochureState?.candidate) {
+      if (context.activeInquiry?.id) {
+        await this.recordCampBrochureSend(context.activeInquiry.id, campBrochureState.candidate);
+      }
+      const sendReply = await this.buildPromptDrivenCampBrochureSend({
+        context,
+        candidate: campBrochureState.candidate,
+      });
+      const followUp = nextField
+        ? await this.buildPromptDrivenFollowUp({
+            nextField,
+            context,
+            fallbackReplyText: parsed.replyText,
+          })
+        : null;
+      const nowIso = new Date().toISOString();
+      contextPatch = this.mergeContextPatch(contextPatch, {
+        [this.campBrochureContextKey]: {
+          ...campBrochureState,
+          status: 'SENT',
+          sentAt: nowIso,
+          checkedAt: nowIso,
+        },
+      });
+
+      return {
+        structured: {
+          ...parsed,
+          replyText: followUp ? `${sendReply}\n${followUp}` : sendReply,
+          shouldAskFollowUp: Boolean(followUp),
+          nextStage: followUp ? this.mapNextStageFromField(nextField!) : 'SEND_RESOURCE',
+          missingFields: followUp ? [nextField!] : [],
+          shouldRefreshRecommendations: false,
+        },
+        trace: {
+          strategy: followUp ? 'single_follow_up' : 'none',
+          details: {
+            reason: 'camp_brochure_sent',
+            resourceId: campBrochureState.candidate.resourceId,
+            nextField: nextField ?? null,
+          },
+        },
+        contextPatch,
+        outboundMediaUrl: this.toAbsoluteMediaUrl(campBrochureState.candidate.fileUrl),
+      };
+    }
+
+    if (brochureReplyAction === 'DECLINE' && campBrochureState) {
+      const nowIso = new Date().toISOString();
+      contextPatch = this.mergeContextPatch(contextPatch, {
+        [this.campBrochureContextKey]: {
+          ...campBrochureState,
+          status: 'DECLINED',
+          checkedAt: nowIso,
+        },
+      });
+    }
+
+    if (this.shouldOfferCampBrochure(context, nextField, campBrochureState)) {
+      const offerReply = await this.buildPromptDrivenCampBrochureOffer({
+        context,
+        candidate: campBrochureState!.candidate!,
+      });
+      const nowIso = new Date().toISOString();
+      contextPatch = this.mergeContextPatch(contextPatch, {
+        [this.campBrochureContextKey]: {
+          ...campBrochureState,
+          status: 'OFFERED',
+          offeredAt: campBrochureState?.offeredAt ?? nowIso,
+          checkedAt: nowIso,
+        },
+      });
+
+      return {
+        structured: {
+          ...parsed,
+          replyText: offerReply,
+          shouldAskFollowUp: true,
+          nextStage: 'SEND_RESOURCE',
+          missingFields: nextField ? [nextField] : [],
+          shouldRefreshRecommendations: false,
+        },
+        trace: {
+          strategy: 'single_follow_up',
+          details: {
+            reason: 'camp_brochure_offer',
+            resourceId: campBrochureState?.candidate?.resourceId ?? null,
+            nextField: nextField ?? null,
+          },
+        },
+        contextPatch,
+      };
+    }
 
     if (!nextField) {
       const shouldCloseConversation = this.isReadyForAdvisorHandoff(context) && this.hasContactName(context) && this.hasContactEmail(context);
@@ -645,6 +780,7 @@ export class ConciergeOrchestratorService {
             confidence: policySignals.confidence,
           },
         },
+        contextPatch,
       };
     }
 
@@ -672,7 +808,392 @@ export class ConciergeOrchestratorService {
           needsClarification: policySignals.needsClarification,
         },
       },
+      contextPatch,
     };
+  }
+
+  private async resolveCampBrochureState(
+    context: ConciergeTurnContext,
+  ): Promise<{ state: CampBrochureState | null; contextPatch: Record<string, unknown> | null }> {
+    const inquiry = context.activeInquiry;
+    if (!inquiry || inquiry.family?.key !== 'CAMP' || !inquiry.country?.code) {
+      return { state: null, contextPatch: null };
+    }
+
+    const existing = this.getCampBrochureStateFromContext(context);
+    const resolved = await this.findCampBrochureCandidate(context);
+    const nowIso = new Date().toISOString();
+
+    if (!resolved) {
+      const unavailable: CampBrochureState = {
+        status: 'UNAVAILABLE',
+        candidate: null,
+        checkedAt: nowIso,
+        offeredAt: null,
+        sentAt: null,
+      };
+      return {
+        state: unavailable,
+        contextPatch: {
+          [this.campBrochureContextKey]: unavailable,
+        },
+      };
+    }
+
+    const keepOffered = existing?.status === 'OFFERED' && existing.candidate?.versionId === resolved.versionId;
+    const keepSent = existing?.status === 'SENT' && existing.candidate?.versionId === resolved.versionId;
+    const keepDeclined = existing?.status === 'DECLINED' && existing.candidate?.versionId === resolved.versionId;
+
+    const state: CampBrochureState = {
+      status: keepSent ? 'SENT' : keepOffered ? 'OFFERED' : keepDeclined ? 'DECLINED' : 'READY',
+      candidate: resolved,
+      checkedAt: nowIso,
+      offeredAt: keepOffered ? existing?.offeredAt ?? nowIso : null,
+      sentAt: keepSent ? existing?.sentAt ?? nowIso : null,
+    };
+
+    return {
+      state,
+      contextPatch: {
+        [this.campBrochureContextKey]: state,
+      },
+    };
+  }
+
+  private getCampBrochureStateFromContext(context: ConciergeTurnContext): CampBrochureState | null {
+    const contextJson = context.conversation?.contextJson;
+    if (!contextJson || typeof contextJson !== 'object') {
+      return null;
+    }
+
+    const raw = (contextJson as Record<string, unknown>)[this.campBrochureContextKey];
+    if (!raw || typeof raw !== 'object') {
+      return null;
+    }
+
+    const status = (raw as Record<string, unknown>).status;
+    const allowedStatus = new Set<CampBrochureStateStatus>(['READY', 'OFFERED', 'SENT', 'DECLINED', 'UNAVAILABLE']);
+    if (typeof status !== 'string' || !allowedStatus.has(status as CampBrochureStateStatus)) {
+      return null;
+    }
+
+    const candidateRaw = (raw as Record<string, unknown>).candidate;
+    const candidate = this.normalizeCampBrochureCandidate(candidateRaw);
+
+    return {
+      status: status as CampBrochureStateStatus,
+      candidate,
+      checkedAt: this.asIsoString((raw as Record<string, unknown>).checkedAt) ?? new Date().toISOString(),
+      offeredAt: this.asIsoString((raw as Record<string, unknown>).offeredAt),
+      sentAt: this.asIsoString((raw as Record<string, unknown>).sentAt),
+    };
+  }
+
+  private normalizeCampBrochureCandidate(value: unknown): CampBrochureCandidate | null {
+    if (!value || typeof value !== 'object') return null;
+    const payload = value as Record<string, unknown>;
+    const resourceId = this.asNonEmptyStringValue(payload.resourceId);
+    const resourceTitle = this.asNonEmptyStringValue(payload.resourceTitle);
+    const countryCode = this.asNonEmptyStringValue(payload.countryCode);
+    const versionId = this.asNonEmptyStringValue(payload.versionId);
+    const fileName = this.asNonEmptyStringValue(payload.fileName);
+    const fileUrl = this.asNonEmptyStringValue(payload.fileUrl);
+
+    if (!resourceId || !resourceTitle || !countryCode || !versionId || !fileName || !fileUrl) {
+      return null;
+    }
+
+    return {
+      resourceId,
+      resourceTitle,
+      countryCode,
+      countryName: this.asNonEmptyStringValue(payload.countryName),
+      locationSlug: this.asNonEmptyStringValue(payload.locationSlug),
+      locationName: this.asNonEmptyStringValue(payload.locationName),
+      versionId,
+      fileName,
+      fileUrl: this.toPublicUrl(fileUrl),
+      mimeType: this.asNonEmptyStringValue(payload.mimeType),
+    };
+  }
+
+  private asIsoString(value: unknown): string | null {
+    if (typeof value !== 'string' || value.trim().length === 0) {
+      return null;
+    }
+    const parsed = new Date(value);
+    if (Number.isNaN(parsed.getTime())) {
+      return null;
+    }
+    return parsed.toISOString();
+  }
+
+  private async findCampBrochureCandidate(context: ConciergeTurnContext): Promise<CampBrochureCandidate | null> {
+    const inquiry = context.activeInquiry;
+    const countryCode = inquiry?.country?.code ?? null;
+    if (!inquiry || inquiry.family?.key !== 'CAMP' || !countryCode) {
+      return null;
+    }
+
+    const locationSlug = inquiry.location?.slug ?? undefined;
+    const byLocation = locationSlug
+      ? await this.queryCampBrochureResources({
+          countryCode,
+          locationSlug,
+        })
+      : [];
+
+    if (byLocation.length > 0) {
+      const candidate = this.toCampBrochureCandidate(byLocation[0]);
+      if (candidate) return candidate;
+    }
+
+    const byCountry = await this.queryCampBrochureResources({
+      countryCode,
+    });
+
+    return byCountry.length > 0 ? this.toCampBrochureCandidate(byCountry[0]) : null;
+  }
+
+  private async queryCampBrochureResources(input: {
+    countryCode: string;
+    locationSlug?: string;
+  }): Promise<Array<Record<string, unknown>>> {
+    const result = await this.toolExecutor.execute('list_available_resources', {
+      activeOnly: true,
+      familyKey: 'CAMP',
+      type: 'BROCHURE',
+      countryCode: input.countryCode,
+      ...(input.locationSlug ? { locationSlug: input.locationSlug } : {}),
+    });
+
+    if (!result || typeof result !== 'object') {
+      return [];
+    }
+
+    const resources = (result as Record<string, unknown>).resources;
+    return Array.isArray(resources) ? (resources.filter((item) => item && typeof item === 'object') as Array<Record<string, unknown>>) : [];
+  }
+
+  private toCampBrochureCandidate(resource: Record<string, unknown>): CampBrochureCandidate | null {
+    const version = resource.currentVersion;
+    if (!version || typeof version !== 'object') {
+      return null;
+    }
+
+    const resourceId = this.asNonEmptyStringValue(resource.id);
+    const resourceTitle = this.asNonEmptyStringValue(resource.title);
+    const countryCode = this.asNonEmptyStringValue(resource.countryCode);
+    const versionId = this.asNonEmptyStringValue((version as Record<string, unknown>).id);
+    const fileName = this.asNonEmptyStringValue((version as Record<string, unknown>).fileName);
+    const fileUrl = this.asNonEmptyStringValue((version as Record<string, unknown>).fileUrl);
+
+    if (!resourceId || !resourceTitle || !countryCode || !versionId || !fileName || !fileUrl) {
+      return null;
+    }
+
+    return {
+      resourceId,
+      resourceTitle,
+      countryCode,
+      countryName: this.asNonEmptyStringValue(resource.countryName),
+      locationSlug: this.asNonEmptyStringValue(resource.locationSlug),
+      locationName: this.asNonEmptyStringValue(resource.locationName),
+      versionId,
+      fileName,
+      fileUrl: this.toPublicUrl(fileUrl),
+      mimeType: this.asNonEmptyStringValue((version as Record<string, unknown>).mimeType),
+    };
+  }
+
+  private asNonEmptyStringValue(value: unknown): string | null {
+    if (typeof value !== 'string') return null;
+    const normalized = value.trim();
+    return normalized.length > 0 ? normalized : null;
+  }
+
+  private toPublicUrl(pathOrUrl: string): string {
+    if (/^https?:\/\//i.test(pathOrUrl)) {
+      return pathOrUrl;
+    }
+
+    const baseUrl = env.PUBLIC_BASE_URL?.trim().replace(/\/+$/, '');
+    if (!baseUrl) {
+      return pathOrUrl;
+    }
+
+    const relative = pathOrUrl.startsWith('/') ? pathOrUrl : `/${pathOrUrl}`;
+    return `${baseUrl}${relative}`;
+  }
+
+  private toAbsoluteMediaUrl(pathOrUrl: string | null): string | null {
+    if (!pathOrUrl) return null;
+    const normalized = this.toPublicUrl(pathOrUrl);
+    return /^https?:\/\//i.test(normalized) ? normalized : null;
+  }
+
+  private async resolveCampBrochureReplyAction(
+    context: ConciergeTurnContext,
+    state: CampBrochureState | null,
+  ): Promise<'SEND' | 'DECLINE' | 'UNKNOWN'> {
+    if (!state || (state.status !== 'OFFERED' && state.status !== 'SENT')) {
+      return 'UNKNOWN';
+    }
+
+    const latestMessage = context.latestMessage;
+    if (!latestMessage || latestMessage.direction !== 'INBOUND') {
+      return 'UNKNOWN';
+    }
+
+    const previousOutbound = this.findPreviousOutboundMessage(context);
+    const instructions = [
+      'Clasifica la respuesta del usuario sobre un ofrecimiento de folleto PDF.',
+      'Devuelve JSON estricto con la forma {"action":"SEND|DECLINE|UNKNOWN","confidence":number}.',
+      'Estado OFFERED: SEND si el usuario confirma que sí quiere que le envíen el folleto.',
+      'Estado SENT: SEND si el usuario pide que lo reenvíen, dice que no le llegó, que no ve el archivo, que lo comparta otra vez o insiste en recibir el PDF.',
+      'DECLINE: el usuario rechaza, pospone o dice que no quiere folleto.',
+      'UNKNOWN: no está claro, responde una pregunta diferente o continúa dando datos del flujo.',
+      'No inventes; usa contexto de latestMessage y previousAssistantMessage.',
+    ].join('\n');
+
+    try {
+      const response = await this.responsesClient.createTextResponse({
+        instructions,
+        input: JSON.stringify({
+          brochureState: state.status,
+          brochureTitle: state.candidate?.resourceTitle ?? null,
+          latestMessage: latestMessage.text,
+          previousAssistantMessage: previousOutbound?.text ?? null,
+          recentMessages: (context.conversation?.messages ?? []).slice(-10).map((message) => ({
+            direction: message.direction,
+            text: message.text,
+          })),
+        }),
+      });
+
+      const parsed = JSON.parse(response.outputText) as { action?: unknown; confidence?: unknown };
+      const action = parsed?.action;
+      if (action === 'SEND' || action === 'DECLINE' || action === 'UNKNOWN') {
+        return action;
+      }
+      return 'UNKNOWN';
+    } catch {
+      return 'UNKNOWN';
+    }
+  }
+
+  private shouldOfferCampBrochure(
+    context: ConciergeTurnContext,
+    nextField:
+      | 'country'
+      | 'studentAge'
+      | 'residenceCountry'
+      | 'cityOfResidence'
+      | 'family'
+      | 'program'
+      | 'accommodation'
+      | 'preferredStartMonth'
+      | 'preferredStartYear'
+      | 'weeks'
+      | 'contactName'
+      | 'contactEmail'
+      | null,
+    state: CampBrochureState | null,
+  ): boolean {
+    if (!context.activeInquiry || context.activeInquiry.family?.key !== 'CAMP') return false;
+    if (!context.activeInquiry.country?.code) return false;
+    if (!state || !state.candidate) return false;
+    if (state.status === 'OFFERED' || state.status === 'SENT' || state.status === 'DECLINED') return false;
+    if (nextField === 'country' || nextField === 'studentAge' || nextField === 'family') return false;
+    return true;
+  }
+
+  private async buildPromptDrivenCampBrochureOffer(params: {
+    context: ConciergeTurnContext;
+    candidate: CampBrochureCandidate;
+  }): Promise<string> {
+    const fallback = `Tengo un folleto disponible para ${params.candidate.countryName ?? 'este país'}. ¿Quieres que te lo comparta ahora?`;
+    try {
+      const instructions = [
+        'Eres un concierge comercial de TKTours.',
+        'Redacta un mensaje breve, cálido y natural en español para ofrecer un folleto PDF.',
+        'Debe terminar con una pregunta de confirmación para enviarlo.',
+        'No menciones procesos internos ni herramientas.',
+        'No uses formato JSON.',
+      ].join('\n');
+
+      const response = await this.responsesClient.createTextResponse({
+        instructions,
+        input: JSON.stringify({
+          familyKey: params.context.activeInquiry?.family?.key ?? null,
+          countryName: params.candidate.countryName,
+          locationName: params.candidate.locationName,
+          brochureTitle: params.candidate.resourceTitle,
+          latestUserMessage: params.context.latestMessage?.text ?? null,
+        }),
+      });
+
+      return (response.outputText ?? '').trim() || fallback;
+    } catch {
+      return fallback;
+    }
+  }
+
+  private async buildPromptDrivenCampBrochureSend(params: {
+    context: ConciergeTurnContext;
+    candidate: CampBrochureCandidate;
+  }): Promise<string> {
+    const fallback = `Claro, te comparto el folleto PDF para que lo revises con calma.`;
+    try {
+      const instructions = [
+        'Eres un concierge comercial de TKTours.',
+        'Redacta un mensaje breve y natural para confirmar el envío de un folleto PDF.',
+        'No incluyas enlaces, URLs, rutas internas ni nombres técnicos de archivo.',
+        'Menciona que el PDF se compartirá como archivo adjunto.',
+        'No uses formato JSON.',
+      ].join('\n');
+
+      const response = await this.responsesClient.createTextResponse({
+        instructions,
+        input: JSON.stringify({
+          fileName: params.candidate.fileName,
+          brochureTitle: params.candidate.resourceTitle,
+          countryName: params.candidate.countryName,
+          locationName: params.candidate.locationName,
+        }),
+      });
+
+      const candidate = (response.outputText ?? '').trim();
+      return candidate || fallback;
+    } catch {
+      return fallback;
+    }
+  }
+
+  private mergeContextPatch(
+    base: Record<string, unknown> | null,
+    patch: Record<string, unknown> | null,
+  ): Record<string, unknown> | null {
+    if (!base && !patch) return null;
+    return {
+      ...(base ?? {}),
+      ...(patch ?? {}),
+    };
+  }
+
+  private async recordCampBrochureSend(inquiryId: string, candidate: CampBrochureCandidate): Promise<void> {
+    try {
+      await prisma.inquiryResourceSend.create({
+        data: {
+          inquiryId,
+          resourceId: candidate.resourceId,
+          resourceVersionId: candidate.versionId,
+          sentReason: 'camp_brochure_confirmed_by_user',
+        },
+      });
+    } catch {
+      // Sending trace should not break concierge flow.
+    }
   }
 
   private async hydrateInquiryFamilyFromIntent(
@@ -1481,15 +2002,18 @@ export class ConciergeOrchestratorService {
     conversationId: string;
     activeInquiryId: string | null;
     replyText: string;
+    mediaUrl: string | null;
     nextStage: string | null;
     shouldRefreshRecommendations: boolean;
     responseId: string;
     existingContextJson: Record<string, unknown> | null;
+    contextPatch: Record<string, unknown> | null;
   }) {
     let conversation = await this.conversationRepository.createMessage({
       conversationId: params.conversationId,
       direction: 'OUTBOUND',
       text: params.replyText,
+      mediaUrl: params.mediaUrl,
       metadata: {
         source: 'concierge-orchestrator',
       },
@@ -1497,6 +2021,7 @@ export class ConciergeOrchestratorService {
 
     const nextContextJson = {
       ...(params.existingContextJson ?? {}),
+      ...(params.contextPatch ?? {}),
       [this.conversationContextResponseKey]: {
         lastResponseId: params.responseId,
         model: this.responsesClient.getModel(),

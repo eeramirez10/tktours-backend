@@ -37,6 +37,7 @@ export const createInquiryBodySchema = z.object({
   channel: z.enum(CHANNELS).optional(),
   countryCode: optionalTrimmedString,
   familyKey: z.enum(FAMILY_KEYS).optional(),
+  locationSlug: optionalTrimmedString,
   programSlug: optionalTrimmedString,
   studentAge: z.number().int().min(1).max(99).nullable().optional(),
   cityOfResidence: optionalNullableTrimmedString,

@@ -85,12 +85,24 @@ export class TwilioWhatsAppInboundService {
     const outboundMessage =
       [...turn.persistedConversation.messages].reverse().find((message) => message.direction === 'OUTBOUND') ?? null;
 
-    const twilioResult = await this.sendWhatsAppMessage({
+    const textResult = await this.sendWhatsAppMessage({
       to: from,
       body: replyText,
     });
 
-    if (!outboundMessage || !twilioResult.sid) {
+    const mediaUrl = outboundMessage?.mediaUrl ?? null;
+    const mediaResult =
+      mediaUrl && /^https?:\/\//i.test(mediaUrl)
+        ? await this.sendWhatsAppMessage({
+            to: from,
+            mediaUrl,
+          }).catch((error) => {
+            logger.error({ error, mediaUrl, messageId: outboundMessage?.id }, 'twilio media outbound request failed');
+            return { sid: null, status: 'FAILED_TO_REQUEST' };
+          })
+        : null;
+
+    if (!outboundMessage || !textResult.sid) {
       return;
     }
 
@@ -98,11 +110,13 @@ export class TwilioWhatsAppInboundService {
       await prisma.message.update({
         where: { id: outboundMessage.id },
         data: {
-          providerMessageId: twilioResult.sid,
+          providerMessageId: textResult.sid,
           metadata: toNullableJsonInput({
             ...(outboundMessage.metadata ?? {}),
             transport: 'twilio',
-            twilioStatus: twilioResult.status,
+            twilioStatus: textResult.status,
+            mediaTwilioSid: mediaResult?.sid ?? null,
+            mediaTwilioStatus: mediaResult?.status ?? null,
           }),
         },
       });
@@ -198,7 +212,7 @@ export class TwilioWhatsAppInboundService {
     }
   }
 
-  private async sendWhatsAppMessage(params: { to: string; body: string }): Promise<{ sid: string | null; status: string | null }> {
+  private async sendWhatsAppMessage(params: { to: string; body?: string; mediaUrl?: string | null }): Promise<{ sid: string | null; status: string | null }> {
     const accountSid = env.TWILIO_ACCOUNT_SID;
     const authToken = env.TWILIO_AUTH_TOKEN;
     const from = env.TWILIO_WHATSAPP_FROM;
@@ -215,8 +229,13 @@ export class TwilioWhatsAppInboundService {
     const body = new URLSearchParams({
       From: fromAddress,
       To: toAddress,
-      Body: params.body,
     });
+    if (params.body?.trim()) {
+      body.append('Body', params.body.trim());
+    }
+    if (params.mediaUrl && /^https?:\/\//i.test(params.mediaUrl)) {
+      body.append('MediaUrl', params.mediaUrl);
+    }
 
     const response = await fetch(endpoint, {
       method: 'POST',

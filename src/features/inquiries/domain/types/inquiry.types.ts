@@ -41,6 +41,7 @@ export type CreateInquiryInput = {
   channel?: InquiryChannel;
   countryCode?: string;
   familyKey?: InquiryFamilyKey;
+  locationSlug?: string;
   programSlug?: string;
   studentAge?: number | null;
   cityOfResidence?: string | null;
@@ -57,6 +58,7 @@ export type UpdateInquiryInput = {
   inquiryId: string;
   countryCode?: string | null;
   familyKey?: InquiryFamilyKey | null;
+  locationSlug?: string | null;
   programSlug?: string | null;
   studentAge?: number | null;
   cityOfResidence?: string | null;
@@ -127,6 +129,7 @@ export type InquiryListItem = {
   notes: string | null;
   country: InquiryLookupSummary | null;
   family: InquiryLookupSummary | null;
+  location: (InquiryLookupSummary & { venueName?: string | null }) | null;
   program: InquiryLookupSummary | null;
   accommodationType: InquiryLookupSummary | null;
   contact: InquiryContactSummary | null;

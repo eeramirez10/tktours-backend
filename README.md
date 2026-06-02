@@ -262,6 +262,7 @@ Ejemplo en `.env.example`:
 - `LOG_LEVEL`
 - `NODE_ENV`
 - `RESOURCES_STORAGE_DIR`
+- `PUBLIC_BASE_URL` (ej. `https://tu-dominio.ngrok-free.app`)
 - `TWILIO_ACCOUNT_SID`
 - `TWILIO_AUTH_TOKEN`
 - `TWILIO_WHATSAPP_FROM`

@@ -1,5 +1,5 @@
 @baseUrl = http://localhost:3000
-@conversationId = e9722422-f6bd-4144-ba7a-2ef68043d298
+@conversationId = c5f7fa95-fbba-49d3-99c7-1537fa85d2cc
 
 ### Service health
 GET {{baseUrl}}/health

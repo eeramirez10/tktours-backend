@@ -133,6 +133,7 @@ model Country {
   name       String
   code       String     @unique
   active     Boolean    @default(true)
+  locations  ProgramLocation[]
   programs   Program[]
   resources  Resource[]
   inquiries  Inquiry[]
@@ -156,6 +157,7 @@ model Program {
   id                  String                     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   countryId           String @db.Uuid
   familyId            String @db.Uuid
+  locationId          String? @db.Uuid
   slug                String
   name                String
   description         String?
@@ -164,7 +166,9 @@ model Program {
   active              Boolean                    @default(true)
   country             Country                    @relation(fields: [countryId], references: [id])
   family              ProductFamily              @relation(fields: [familyId], references: [id])
+  location            ProgramLocation?           @relation(fields: [locationId], references: [id])
   rule                ProgramRule?
+  prices              ProgramPrice[]
   accommodations      ProgramAccommodationRule[]
   startWindows        ProgramStartWindow[]
   resources           Resource[]
@@ -175,6 +179,26 @@ model Program {
 
   @@unique([countryId, slug])
   @@index([familyId])
+  @@index([locationId])
+}
+
+model ProgramLocation {
+  id          String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  countryId   String @db.Uuid
+  name        String
+  slug        String
+  venueName   String?
+  description String?
+  active      Boolean    @default(true)
+  country     Country    @relation(fields: [countryId], references: [id])
+  programs    Program[]
+  resources   Resource[]
+  inquiries   Inquiry[]
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+
+  @@unique([countryId, slug])
+  @@index([countryId, active])
 }
 
 model ProgramRule {
@@ -190,6 +214,24 @@ model ProgramRule {
   program           Program   @relation(fields: [programId], references: [id], onDelete: Cascade)
   createdAt         DateTime  @default(now())
   updatedAt         DateTime  @updatedAt
+}
+
+model ProgramPrice {
+  id         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  programId  String @db.Uuid
+  currency   String
+  amountFrom Decimal? @db.Decimal(12, 2)
+  amountTo   Decimal? @db.Decimal(12, 2)
+  priceLabel String?
+  notes      String?
+  year       Int?
+  active     Boolean  @default(true)
+  program    Program  @relation(fields: [programId], references: [id], onDelete: Cascade)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@index([programId, active])
+  @@index([year])
 }
 
 model AccommodationType {
@@ -242,6 +284,7 @@ model Resource {
   countryId       String @db.Uuid
   familyId        String? @db.Uuid
   programId       String? @db.Uuid
+  locationId      String? @db.Uuid
   type            ResourceType
   title           String
   description     String?
@@ -253,6 +296,7 @@ model Resource {
   country         Country                @relation(fields: [countryId], references: [id])
   family          ProductFamily?         @relation(fields: [familyId], references: [id])
   program         Program?               @relation(fields: [programId], references: [id])
+  location        ProgramLocation?       @relation(fields: [locationId], references: [id])
   createdBy       AdminUser?             @relation("ResourceCreatedBy", fields: [createdById], references: [id])
   updatedBy       AdminUser?             @relation("ResourceUpdatedBy", fields: [updatedById], references: [id])
   versions        ResourceVersion[]
@@ -264,6 +308,7 @@ model Resource {
   @@index([countryId, type, active])
   @@index([familyId])
   @@index([programId])
+  @@index([locationId])
   @@index([month, year])
 }
 
@@ -374,6 +419,7 @@ model Inquiry {
   contactId           String? @db.Uuid
   countryId           String? @db.Uuid
   familyId            String? @db.Uuid
+  locationId          String? @db.Uuid
   programId           String? @db.Uuid
   studentAge          Int?
   cityOfResidence     String?
@@ -388,6 +434,7 @@ model Inquiry {
   contact             Contact?                @relation(fields: [contactId], references: [id])
   country             Country?                @relation(fields: [countryId], references: [id])
   family              ProductFamily?          @relation(fields: [familyId], references: [id])
+  location            ProgramLocation?        @relation(fields: [locationId], references: [id])
   program             Program?                @relation(fields: [programId], references: [id])
   accommodationType   AccommodationType?      @relation(fields: [accommodationTypeId], references: [id])
   recommendations     InquiryRecommendation[]
@@ -398,6 +445,7 @@ model Inquiry {
 
   @@index([conversationId, status])
   @@index([countryId, familyId, studentAge])
+  @@index([locationId])
 }
 
 model InquiryRecommendation {

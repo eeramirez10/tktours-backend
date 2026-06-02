@@ -25,12 +25,20 @@ export type CatalogCollectionQuery = {
 export type ListCatalogProgramsQuery = CatalogCollectionQuery & {
   countryCode?: string;
   familyKey?: CatalogFamilyKey;
+  locationSlug?: string;
+  search?: string;
+};
+
+export type ListCatalogLocationsQuery = CatalogCollectionQuery & {
+  countryCode?: string;
+  familyKey?: CatalogFamilyKey;
   search?: string;
 };
 
 export type CatalogProgramRecommendationQuery = {
   countryCode: string;
   familyKey?: CatalogFamilyKey;
+  locationSlug?: string;
   studentAge?: number;
   accommodationKey?: CatalogAccommodationKey;
   preferredStartMonth?: number;
@@ -55,6 +63,25 @@ export type CatalogFamily = {
   key: CatalogFamilyKey;
   name: string;
   active: boolean;
+};
+
+export type CatalogProgramLocation = {
+  id: string;
+  slug: string;
+  name: string;
+  venueName: string | null;
+  description: string | null;
+  active: boolean;
+  country: CatalogCountry;
+};
+
+export type CatalogProgramPrice = {
+  currency: string;
+  amountFrom: string | null;
+  amountTo: string | null;
+  priceLabel: string | null;
+  notes: string | null;
+  year: number | null;
 };
 
 export type CatalogProgramAccommodation = {
@@ -85,12 +112,14 @@ export type CatalogProgram = {
   active: boolean;
   country: CatalogCountry;
   family: CatalogFamily;
+  location: CatalogProgramLocation | null;
   quoteMode: CatalogQuoteMode | null;
   minWeeks: number | null;
   maxWeeks: number | null;
   allowsMiniStay: boolean;
   miniStayGroupOnly: boolean;
   ruleNotes: string | null;
+  prices: CatalogProgramPrice[];
   accommodations: CatalogProgramAccommodation[];
   startWindows: CatalogProgramStartWindow[];
 };

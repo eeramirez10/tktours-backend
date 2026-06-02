@@ -20,6 +20,7 @@ const optionalTrimmedString = z.preprocess((value) => {
 export const updateInquiryBodySchema = z.object({
   countryCode: optionalNullableTrimmedString,
   familyKey: z.enum(FAMILY_KEYS).nullable().optional(),
+  locationSlug: optionalNullableTrimmedString,
   programSlug: optionalNullableTrimmedString,
   studentAge: z.number().int().min(1).max(99).nullable().optional(),
   cityOfResidence: optionalNullableTrimmedString,

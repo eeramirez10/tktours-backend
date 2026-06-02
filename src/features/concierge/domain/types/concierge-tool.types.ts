@@ -6,7 +6,9 @@ export type ConciergeToolName =
   | 'detect_user_intent'
   | 'evaluate_policy_signals'
   | 'list_available_countries'
+  | 'list_available_locations'
   | 'list_available_programs'
+  | 'list_available_resources'
   | 'list_available_accommodations'
   | 'list_weeks_options'
   | 'extract_inquiry_fields';
@@ -20,6 +22,7 @@ export type GetContactInfoArgs = {
 export type FindMatchingProgramsArgs = {
   countryCode: string;
   familyKey?: 'CAMP' | 'LANGUAGE_COURSE' | 'SCHOOL_PROGRAM';
+  locationSlug?: string;
   studentAge?: number;
   accommodationKey?: 'HOST_FAMILY' | 'UNIVERSITY_RESIDENCE' | 'SHARED_APARTMENT';
   preferredStartMonth?: number;
@@ -38,6 +41,22 @@ export type ListAvailableCountriesArgs = {
 export type ListAvailableProgramsArgs = {
   countryCode?: string;
   familyKey?: 'CAMP' | 'LANGUAGE_COURSE' | 'SCHOOL_PROGRAM';
+  locationSlug?: string;
+  activeOnly?: boolean;
+};
+
+export type ListAvailableLocationsArgs = {
+  countryCode?: string;
+  familyKey?: 'CAMP' | 'LANGUAGE_COURSE' | 'SCHOOL_PROGRAM';
+  activeOnly?: boolean;
+};
+
+export type ListAvailableResourcesArgs = {
+  countryCode?: string;
+  familyKey?: 'CAMP' | 'LANGUAGE_COURSE' | 'SCHOOL_PROGRAM';
+  locationSlug?: string;
+  programSlug?: string;
+  type?: 'QUOTE' | 'INFO' | 'BROCHURE' | 'MANUAL' | 'PRESENTATION';
   activeOnly?: boolean;
 };
 
@@ -119,6 +138,7 @@ export type UpdateInquiryArgs = {
   inquiryId: string;
   countryCode?: string | null;
   familyKey?: 'CAMP' | 'LANGUAGE_COURSE' | 'SCHOOL_PROGRAM' | null;
+  locationSlug?: string | null;
   programSlug?: string | null;
   studentAge?: number | null;
   cityOfResidence?: string | null;

@@ -26,6 +26,7 @@ const inquirySelect = {
   updatedAt: true,
   country: { select: { id: true, code: true, name: true } },
   family: { select: { id: true, key: true, name: true } },
+  location: { select: { id: true, slug: true, name: true, venueName: true } },
   program: { select: { id: true, slug: true, name: true } },
   accommodationType: { select: { id: true, key: true, name: true } },
   contact: {
@@ -89,6 +90,9 @@ function mapInquiry(record: InquiryRecord): InquiryDetail {
     qualificationJson: (record.qualificationJson as Record<string, unknown> | null) ?? null,
     country: record.country ? { id: record.country.id, code: record.country.code, name: record.country.name } : null,
     family: record.family ? { id: record.family.id, key: record.family.key, name: record.family.name } : null,
+    location: record.location
+      ? { id: record.location.id, slug: record.location.slug, name: record.location.name, venueName: record.location.venueName }
+      : null,
     program: record.program ? { id: record.program.id, slug: record.program.slug, name: record.program.name } : null,
     accommodationType: record.accommodationType
       ? { id: record.accommodationType.id, key: record.accommodationType.key, name: record.accommodationType.name }
@@ -133,6 +137,7 @@ function mapListItem(record: InquiryRecord): InquiryListItem {
     notes: detail.notes,
     country: detail.country,
     family: detail.family,
+    location: detail.location,
     program: detail.program,
     accommodationType: detail.accommodationType,
     contact: detail.contact,
@@ -180,6 +185,7 @@ export class PrismaInquiryRepository implements InquiryRepository {
       countryCode: input.countryCode,
       familyKey: input.familyKey,
       programSlug: input.programSlug,
+      locationSlug: input.locationSlug,
       accommodationKey: input.accommodationKey,
     });
 
@@ -193,6 +199,7 @@ export class PrismaInquiryRepository implements InquiryRepository {
           contactId,
           countryId: relations.countryId,
           familyId: relations.familyId,
+          locationId: relations.locationId,
           programId: relations.programId,
           accommodationTypeId: relations.accommodationTypeId,
           studentAge: input.studentAge ?? null,
@@ -218,6 +225,7 @@ export class PrismaInquiryRepository implements InquiryRepository {
         id: true,
         country: { select: { code: true } },
         family: { select: { key: true } },
+        location: { select: { slug: true } },
         program: { select: { slug: true } },
         accommodationType: { select: { key: true } },
       },
@@ -230,6 +238,7 @@ export class PrismaInquiryRepository implements InquiryRepository {
     const relations = await this.resolveRelations({
       countryCode: Object.prototype.hasOwnProperty.call(input, 'countryCode') ? input.countryCode ?? undefined : current.country?.code,
       familyKey: Object.prototype.hasOwnProperty.call(input, 'familyKey') ? input.familyKey ?? undefined : current.family?.key,
+      locationSlug: Object.prototype.hasOwnProperty.call(input, 'locationSlug') ? input.locationSlug ?? undefined : current.location?.slug,
       programSlug: Object.prototype.hasOwnProperty.call(input, 'programSlug') ? input.programSlug ?? undefined : current.program?.slug,
       accommodationKey: Object.prototype.hasOwnProperty.call(input, 'accommodationKey')
         ? input.accommodationKey ?? undefined
@@ -241,6 +250,7 @@ export class PrismaInquiryRepository implements InquiryRepository {
       data: {
         countryId: relations.countryId,
         familyId: relations.familyId,
+        locationId: relations.locationId,
         programId: relations.programId,
         accommodationTypeId: relations.accommodationTypeId,
         ...(Object.prototype.hasOwnProperty.call(input, 'studentAge') ? { studentAge: input.studentAge ?? null } : {}),
@@ -309,6 +319,7 @@ export class PrismaInquiryRepository implements InquiryRepository {
     countryCode?: string;
     familyKey?: string;
     programSlug?: string;
+    locationSlug?: string;
     accommodationKey?: string;
   }) {
     const country = input.countryCode
@@ -325,6 +336,19 @@ export class PrismaInquiryRepository implements InquiryRepository {
       throw new NotFoundAppError(`Family not found for key ${input.familyKey}`);
     }
 
+    const location = input.locationSlug
+      ? await prisma.programLocation.findFirst({
+          where: {
+            slug: input.locationSlug,
+            ...(country ? { countryId: country.id } : {}),
+          },
+          select: { id: true },
+        })
+      : null;
+    if (input.locationSlug && !location) {
+      throw new NotFoundAppError(`Location not found for slug ${input.locationSlug}`);
+    }
+
     const accommodationType = input.accommodationKey
       ? await prisma.accommodationType.findUnique({ where: { key: input.accommodationKey as never }, select: { id: true } })
       : null;
@@ -338,7 +362,7 @@ export class PrismaInquiryRepository implements InquiryRepository {
             slug: input.programSlug,
             ...(country ? { countryId: country.id } : {}),
           },
-          select: { id: true, familyId: true, countryId: true },
+          select: { id: true, familyId: true, countryId: true, locationId: true },
         })
       : null;
     if (input.programSlug && !program) {
@@ -351,10 +375,14 @@ export class PrismaInquiryRepository implements InquiryRepository {
     if (program && country && program.countryId !== country.id) {
       throw new ConflictAppError('Program does not belong to the provided country');
     }
+    if (program && location && program.locationId && program.locationId !== location.id) {
+      throw new ConflictAppError('Program does not belong to the provided location');
+    }
 
     return {
       countryId: country?.id ?? null,
       familyId: family?.id ?? null,
+      locationId: location?.id ?? program?.locationId ?? null,
       programId: program?.id ?? null,
       accommodationTypeId: accommodationType?.id ?? null,
     };
