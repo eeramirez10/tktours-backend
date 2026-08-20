@@ -18,6 +18,7 @@ type ProgramSeed = {
     quoteMode: QuoteModeValue;
     minWeeks: number | null;
     maxWeeks: number | null;
+    weekOptions: number[];
     allowsMiniStay: boolean;
     miniStayGroupOnly: boolean;
     notes: string | null;
@@ -42,7 +43,7 @@ type ProgramSeed = {
 const productFamilies = [
   { key: ProductFamilyKey.CAMP, name: 'Camp', active: true },
   { key: ProductFamilyKey.LANGUAGE_COURSE, name: 'Language course', active: true },
-  { key: ProductFamilyKey.SCHOOL_PROGRAM, name: 'School program', active: true },
+  { key: ProductFamilyKey.SCHOOL_PROGRAM, name: 'Circuitos por el mundo', active: true },
 ] as const;
 
 const accommodationTypes = [
@@ -58,6 +59,11 @@ const focusCountries = [
   { code: 'IT', name: 'Italy', active: true },
   { code: 'FR', name: 'France', active: true },
   { code: 'IE', name: 'Ireland', active: true },
+  { code: 'MX', name: 'Mexico', active: true },
+  { code: 'EUROPE', name: 'Europa', active: true },
+  { code: 'SOUTH_AMERICA', name: 'Sudamérica', active: true },
+  { code: 'ASIA', name: 'Países Asiáticos', active: true },
+  { code: 'OTHER_DESTINATIONS', name: 'Otros destinos', active: true },
 ] as const;
 
 const canadaPrograms: ProgramSeed[] = [
@@ -72,6 +78,7 @@ const canadaPrograms: ProgramSeed[] = [
       quoteMode: QuoteMode.WEEK,
       minWeeks: 1,
       maxWeeks: null,
+      weekOptions: [2, 3, 4, 5, 6, 7, 8],
       allowsMiniStay: false,
       miniStayGroupOnly: false,
       notes: 'Temporada principal de finales de junio a mediados de agosto.',
@@ -103,6 +110,7 @@ const canadaPrograms: ProgramSeed[] = [
       quoteMode: QuoteMode.WEEK,
       minWeeks: 1,
       maxWeeks: null,
+      weekOptions: [2, 3, 4, 5, 6, 7, 8],
       allowsMiniStay: false,
       miniStayGroupOnly: false,
       notes: 'Temporada de diciembre a finales de enero.',
@@ -134,6 +142,7 @@ const canadaPrograms: ProgramSeed[] = [
       quoteMode: QuoteMode.WEEK,
       minWeeks: 1,
       maxWeeks: 2,
+      weekOptions: [1, 2],
       allowsMiniStay: false,
       miniStayGroupOnly: false,
       notes: 'Ventana corta de dos semanas durante Easter.',
@@ -165,6 +174,7 @@ const canadaPrograms: ProgramSeed[] = [
       quoteMode: QuoteMode.WEEK,
       minWeeks: 1,
       maxWeeks: null,
+      weekOptions: [2, 4, 8, 12, 24],
       allowsMiniStay: false,
       miniStayGroupOnly: false,
       notes: 'Disponible todo el año con inicios cada lunes.',
@@ -197,6 +207,7 @@ const canadaPrograms: ProgramSeed[] = [
       quoteMode: QuoteMode.SEMESTER,
       minWeeks: null,
       maxWeeks: null,
+      weekOptions: [],
       allowsMiniStay: false,
       miniStayGroupOnly: false,
       notes: 'Inicio regular en septiembre o enero.',
@@ -237,6 +248,7 @@ const canadaPrograms: ProgramSeed[] = [
       quoteMode: QuoteMode.YEAR,
       minWeeks: null,
       maxWeeks: null,
+      weekOptions: [],
       allowsMiniStay: false,
       miniStayGroupOnly: false,
       notes: 'Programa de ciclo escolar anual.',
@@ -268,6 +280,7 @@ const canadaPrograms: ProgramSeed[] = [
       quoteMode: QuoteMode.MINI_STAY,
       minWeeks: null,
       maxWeeks: null,
+      weekOptions: [2, 3, 4],
       allowsMiniStay: true,
       miniStayGroupOnly: true,
       notes: 'Mini stay de 1 a 3 meses exclusivo para grupos.',
@@ -408,6 +421,7 @@ async function seedProgramsForCountry(countrySeed: FocusCountry) {
         quoteMode: program.rule.quoteMode,
         minWeeks: program.rule.minWeeks,
         maxWeeks: program.rule.maxWeeks,
+        weekOptions: program.rule.weekOptions,
         allowsMiniStay: program.rule.allowsMiniStay,
         miniStayGroupOnly: program.rule.miniStayGroupOnly,
         notes: program.rule.notes,
@@ -418,6 +432,7 @@ async function seedProgramsForCountry(countrySeed: FocusCountry) {
         quoteMode: program.rule.quoteMode,
         minWeeks: program.rule.minWeeks,
         maxWeeks: program.rule.maxWeeks,
+        weekOptions: program.rule.weekOptions,
         allowsMiniStay: program.rule.allowsMiniStay,
         miniStayGroupOnly: program.rule.miniStayGroupOnly,
         notes: program.rule.notes,

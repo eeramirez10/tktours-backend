@@ -6,6 +6,7 @@ const MISSING_FIELDS = [
   'studentAge',
   'residenceCountry',
   'cityOfResidence',
+  'tripDays',
   'family',
   'program',
   'accommodation',

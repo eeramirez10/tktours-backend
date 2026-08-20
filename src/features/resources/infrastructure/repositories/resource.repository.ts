@@ -1,4 +1,4 @@
-import { Prisma, ResourceSourceType } from '@prisma/client';
+import { Prisma, QuoteMode, ResourceSourceType } from '@prisma/client';
 import { randomUUID } from 'node:crypto';
 
 import { env } from '../../../../shared/config/env.js';
@@ -8,6 +8,8 @@ import type { ResourceReadRepository } from '../../domain/repositories/resource-
 import type {
   CreateResourceInput,
   CreateResourceVersionInput,
+  ResourceAuditIssue,
+  ResourceAuditReport,
   ResourceCurrentExtraction,
   ResourceCurrentVersion,
   ResourceDetail,
@@ -32,7 +34,18 @@ const listSelect = {
   updatedAt: true,
   country: { select: { id: true, code: true, name: true } },
   family: { select: { id: true, key: true, name: true } },
-  program: { select: { id: true, slug: true, name: true } },
+  program: {
+    select: {
+      id: true,
+      slug: true,
+      name: true,
+      rule: {
+        select: {
+          weekOptions: true,
+        },
+      },
+    },
+  },
   location: { select: { id: true, slug: true, name: true, venueName: true, description: true } },
   versions: {
     where: { isCurrent: true },
@@ -95,8 +108,14 @@ type ResourceDetailRecord = Prisma.ResourceGetPayload<{ select: typeof detailSel
 
 type ResolvedRelations = {
   countryId: string;
+  countryCode: string;
+  countryName: string;
   familyId: string | null;
+  familyKey: string | null;
   programId: string | null;
+  programSlug: string | null;
+  programName: string | null;
+  programSeasonKeys: string[];
   locationId: string | null;
 };
 
@@ -164,6 +183,15 @@ function mapCurrentVersion(version: ResourceListRecord['versions'][number] | nul
 
 function mapListResource(resource: ResourceListRecord): ResourceListItem {
   const currentVersion = resource.versions[0] ?? null;
+  const weekOptions = resource.program?.rule?.weekOptions ?? [];
+  const program = resource.program
+    ? {
+        id: resource.program.id,
+        slug: resource.program.slug,
+        name: resource.program.name,
+        weekOptions,
+      }
+    : null;
 
   return {
     id: resource.id,
@@ -173,9 +201,10 @@ function mapListResource(resource: ResourceListRecord): ResourceListItem {
     month: resource.month,
     year: resource.year,
     active: resource.active,
+    weekOptions,
     country: resource.country,
     family: resource.family,
-    program: resource.program,
+    program,
     location: resource.location,
     currentVersion: mapCurrentVersion(currentVersion),
     currentExtraction: mapExtraction(currentVersion?.extraction ?? null),
@@ -235,27 +264,42 @@ export class ResourceRepository implements ResourceReadRepository {
 
   async createResource(input: CreateResourceInput): Promise<ResourceDetail> {
     const relations = await this.resolveRelations(input);
+    await this.validateResourceRelations({
+      relations,
+      resourceId: null,
+      type: input.type,
+      active: input.active,
+    });
 
-    const resource = await prisma.resource.create({
-      data: {
-        countryId: relations.countryId,
-        familyId: relations.familyId,
+    const resource = await prisma.$transaction(async (tx) => {
+      const created = await tx.resource.create({
+        data: {
+          countryId: relations.countryId,
+          familyId: relations.familyId,
+          programId: relations.programId,
+          locationId: relations.locationId,
+          type: input.type,
+          title: input.title,
+          description: input.description,
+          month: input.month,
+          year: input.year,
+          active: input.active,
+          createdById: input.createdById ?? null,
+          updatedById: input.createdById ?? null,
+        },
+        select: detailSelect,
+      });
+
+      await this.syncProgramWeekOptions(tx, {
         programId: relations.programId,
-        locationId: relations.locationId,
-        type: input.type,
-        title: input.title,
-        description: input.description,
-        month: input.month,
-        year: input.year,
-        active: input.active,
-        createdById: input.createdById ?? null,
-        updatedById: input.createdById ?? null,
-      },
-      select: detailSelect,
+        weekOptions: input.weekOptions,
+      });
+
+      return created;
     });
 
     if (!input.initialVersion) {
-      return mapDetailResource(resource);
+      return (await this.findResourceById(resource.id)) ?? mapDetailResource(resource);
     }
 
     return this.createResourceVersion({
@@ -270,6 +314,8 @@ export class ResourceRepository implements ResourceReadRepository {
       where: { id: input.resourceId },
       select: {
         id: true,
+        type: true,
+        active: true,
         country: { select: { code: true } },
         family: { select: { key: true } },
         program: { select: { slug: true } },
@@ -289,6 +335,8 @@ export class ResourceRepository implements ResourceReadRepository {
     const nextLocationSlug = Object.prototype.hasOwnProperty.call(input, 'locationSlug')
       ? input.locationSlug ?? undefined
       : current.location?.slug;
+    const nextType = input.type ?? current.type;
+    const nextActive = input.active ?? current.active;
 
     const relations = await this.resolveRelations({
       countryCode: nextCountryCode,
@@ -296,30 +344,76 @@ export class ResourceRepository implements ResourceReadRepository {
       programSlug: nextProgramSlug,
       locationSlug: nextLocationSlug,
     });
-
-    const updated = await prisma.resource.update({
-      where: { id: input.resourceId },
-      data: {
-        countryId: relations.countryId,
-        familyId: relations.familyId,
-        programId: relations.programId,
-        locationId: relations.locationId,
-        ...(input.type !== undefined ? { type: input.type } : {}),
-        ...(input.title !== undefined ? { title: input.title } : {}),
-        ...(input.description !== undefined ? { description: input.description } : {}),
-        ...(input.month !== undefined ? { month: input.month } : {}),
-        ...(input.year !== undefined ? { year: input.year } : {}),
-        ...(input.active !== undefined ? { active: input.active } : {}),
-        updatedById: input.updatedById ?? null,
-      },
-      select: detailSelect,
+    await this.validateResourceRelations({
+      relations,
+      resourceId: input.resourceId,
+      type: nextType,
+      active: nextActive,
     });
 
-    return mapDetailResource(updated);
+    const updated = await prisma.$transaction(async (tx) => {
+      const resource = await tx.resource.update({
+        where: { id: input.resourceId },
+        data: {
+          countryId: relations.countryId,
+          familyId: relations.familyId,
+          programId: relations.programId,
+          locationId: relations.locationId,
+          ...(input.type !== undefined ? { type: input.type } : {}),
+          ...(input.title !== undefined ? { title: input.title } : {}),
+          ...(input.description !== undefined ? { description: input.description } : {}),
+          ...(input.month !== undefined ? { month: input.month } : {}),
+          ...(input.year !== undefined ? { year: input.year } : {}),
+          ...(input.active !== undefined ? { active: input.active } : {}),
+          updatedById: input.updatedById ?? null,
+        },
+        select: detailSelect,
+      });
+
+      await this.syncProgramWeekOptions(tx, {
+        programId: relations.programId,
+        weekOptions: input.weekOptions,
+      });
+
+      return resource;
+    });
+
+    return (await this.findResourceById(updated.id)) ?? mapDetailResource(updated);
   }
 
   async setResourceActive(input: SetResourceActiveInput): Promise<ResourceDetail> {
     try {
+      if (input.active) {
+        const current = await prisma.resource.findUnique({
+          where: { id: input.resourceId },
+          select: {
+            id: true,
+            type: true,
+            country: { select: { code: true } },
+            family: { select: { key: true } },
+            program: { select: { slug: true } },
+            location: { select: { slug: true } },
+          },
+        });
+
+        if (!current) {
+          throw new NotFoundAppError('Resource not found');
+        }
+
+        const relations = await this.resolveRelations({
+          countryCode: current.country.code,
+          familyKey: current.family?.key ?? undefined,
+          programSlug: current.program?.slug ?? undefined,
+          locationSlug: current.location?.slug ?? undefined,
+        });
+        await this.validateResourceRelations({
+          relations,
+          resourceId: input.resourceId,
+          type: current.type,
+          active: true,
+        });
+      }
+
       const updated = await prisma.resource.update({
         where: { id: input.resourceId },
         data: {
@@ -474,6 +568,133 @@ export class ResourceRepository implements ResourceReadRepository {
     );
   }
 
+  async auditResources(): Promise<ResourceAuditReport> {
+    const resources = await prisma.resource.findMany({
+      select: {
+        id: true,
+        title: true,
+        type: true,
+        active: true,
+        country: { select: { code: true, name: true } },
+        family: { select: { key: true } },
+        program: {
+          select: {
+            id: true,
+            slug: true,
+            name: true,
+            startWindows: {
+              where: { active: true },
+              select: { seasonKey: true },
+            },
+          },
+        },
+        versions: {
+          where: { isCurrent: true },
+          take: 1,
+          select: {
+            id: true,
+            extraction: {
+              select: {
+                status: true,
+              },
+            },
+          },
+        },
+      },
+      orderBy: [{ title: 'asc' }],
+    });
+
+    const issues: ResourceAuditIssue[] = [];
+    const groupedCampBrochures = new Map<string, string[]>();
+
+    for (const resource of resources) {
+      const currentVersion = resource.versions[0] ?? null;
+
+      if (!currentVersion) {
+        issues.push({
+          code: 'RESOURCE_MISSING_CURRENT_VERSION',
+          severity: 'error',
+          message: 'El resource no tiene una versión actual activa.',
+          resourceId: resource.id,
+          resourceTitle: resource.title,
+          countryCode: resource.country.code,
+          countryName: resource.country.name,
+        });
+      } else if (currentVersion.extraction?.status === 'PENDING' || currentVersion.extraction?.status === 'FAILED') {
+        issues.push({
+          code: 'RESOURCE_PENDING_EXTRACTION',
+          severity: 'warning',
+          message: `La extracción del resource está en estado ${currentVersion.extraction.status}.`,
+          resourceId: resource.id,
+          resourceTitle: resource.title,
+          countryCode: resource.country.code,
+          countryName: resource.country.name,
+        });
+      }
+
+      if (resource.family?.key !== 'CAMP' || resource.type !== 'BROCHURE' || !resource.active) {
+        continue;
+      }
+
+      if (!resource.program) {
+        issues.push({
+          code: 'CAMP_BROCHURE_MISSING_PROGRAM',
+          severity: 'error',
+          message: 'El brochure de campamento activo no está ligado a un programa.',
+          resourceId: resource.id,
+          resourceTitle: resource.title,
+          countryCode: resource.country.code,
+          countryName: resource.country.name,
+        });
+        continue;
+      }
+
+      const seasonKeys = this.extractSeasonKeys(resource.program.startWindows.map((window) => window.seasonKey));
+      if (seasonKeys.length === 0) {
+        issues.push({
+          code: 'CAMP_BROCHURE_MISSING_SEASON',
+          severity: 'error',
+          message: 'El brochure de campamento activo no tiene temporada válida asociada en su programa.',
+          resourceId: resource.id,
+          resourceTitle: resource.title,
+          countryCode: resource.country.code,
+          countryName: resource.country.name,
+        });
+        continue;
+      }
+
+      for (const seasonKey of seasonKeys) {
+        const groupKey = `${resource.country.code}:${seasonKey}`;
+        const list = groupedCampBrochures.get(groupKey) ?? [];
+        list.push(resource.id);
+        groupedCampBrochures.set(groupKey, list);
+      }
+    }
+
+    for (const [groupKey, resourceIds] of groupedCampBrochures.entries()) {
+      if (resourceIds.length <= 1) continue;
+      const [countryCode, seasonKey] = groupKey.split(':');
+      issues.push({
+        code: 'CAMP_BROCHURE_DUPLICATE_SEASON',
+        severity: 'warning',
+        message: 'Hay más de un brochure de campamento activo para la misma temporada y país.',
+        countryCode,
+        seasonKey,
+        relatedResourceIds: resourceIds,
+      });
+    }
+
+    return {
+      generatedAt: new Date().toISOString(),
+      summary: {
+        resourcesChecked: resources.length,
+        errors: issues.filter((issue) => issue.severity === 'error').length,
+        warnings: issues.filter((issue) => issue.severity === 'warning').length,
+      },
+      issues,
+    };
+  }
+
   private async resolveRelations(input: {
     countryCode: string;
     familyKey?: string;
@@ -485,7 +706,7 @@ export class ResourceRepository implements ResourceReadRepository {
   }): Promise<ResolvedRelations> {
     const country = await prisma.country.findUnique({
       where: { code: input.countryCode },
-      select: { id: true },
+      select: { id: true, code: true, name: true },
     });
 
     if (!country) {
@@ -495,7 +716,7 @@ export class ResourceRepository implements ResourceReadRepository {
     const family = input.familyKey
       ? await prisma.productFamily.findUnique({
           where: { key: input.familyKey as never },
-          select: { id: true },
+          select: { id: true, key: true },
         })
       : null;
 
@@ -549,6 +770,12 @@ export class ResourceRepository implements ResourceReadRepository {
             id: true,
             familyId: true,
             locationId: true,
+            slug: true,
+            name: true,
+            startWindows: {
+              where: { active: true },
+              select: { seasonKey: true },
+            },
           },
         })
       : null;
@@ -566,14 +793,20 @@ export class ResourceRepository implements ResourceReadRepository {
     }
 
     if (program && location && program.locationId && program.locationId !== location.id) {
-      throw new ConflictAppError('Program does not belong to the provided location');
+      location = null;
     }
 
     return {
       countryId: country.id,
+      countryCode: country.code,
+      countryName: country.name,
       familyId: family?.id ?? null,
+      familyKey: family?.key ?? null,
       programId: program?.id ?? null,
-      locationId: location?.id ?? program?.locationId ?? null,
+      programSlug: program?.slug ?? null,
+      programName: program?.name ?? null,
+      programSeasonKeys: this.extractSeasonKeys((program?.startWindows ?? []).map((window) => window.seasonKey)),
+      locationId: program?.locationId ?? location?.id ?? null,
     };
   }
 
@@ -589,6 +822,98 @@ export class ResourceRepository implements ResourceReadRepository {
       return Buffer.from(trimmed, 'base64');
     } catch {
       throw new ValidationAppError('fileContentBase64 must be valid base64');
+    }
+  }
+
+  private async validateResourceRelations(input: {
+    relations: ResolvedRelations;
+    resourceId: string | null;
+    type?: string;
+    active: boolean;
+  }): Promise<void> {
+    if (input.relations.familyKey !== 'CAMP' || input.type !== 'BROCHURE' || !input.active) {
+      return;
+    }
+
+    if (!input.relations.programId) {
+      throw new ValidationAppError('Camp brochures must be linked to a program');
+    }
+
+    if (input.relations.programSeasonKeys.length === 0) {
+      throw new ValidationAppError('Camp brochure program must define at least one seasonal start window');
+    }
+
+    const duplicateResource = await prisma.resource.findFirst({
+      where: {
+        ...(input.resourceId ? { id: { not: input.resourceId } } : {}),
+        active: true,
+        type: 'BROCHURE',
+        countryId: input.relations.countryId,
+        family: { key: 'CAMP' },
+        program: {
+          startWindows: {
+            some: {
+              active: true,
+              seasonKey: { in: input.relations.programSeasonKeys as never[] },
+            },
+          },
+        },
+      },
+      select: {
+        id: true,
+      },
+    });
+
+    if (duplicateResource) {
+      const seasons = input.relations.programSeasonKeys.map((seasonKey) => this.toSeasonLabel(seasonKey)).join(', ');
+      throw new ConflictAppError(
+        `There is already an active camp brochure for ${input.relations.countryName} in ${seasons || 'that season'}`,
+      );
+    }
+  }
+
+  private async syncProgramWeekOptions(
+    tx: Prisma.TransactionClient,
+    input: {
+      programId: string | null;
+      weekOptions: number[] | undefined;
+    },
+  ): Promise<void> {
+    if (input.weekOptions === undefined) {
+      return;
+    }
+
+    if (!input.programId) {
+      throw new ValidationAppError('weekOptions requires a linked program');
+    }
+
+    await tx.programRule.upsert({
+      where: { programId: input.programId },
+      create: {
+        programId: input.programId,
+        quoteMode: QuoteMode.WEEK,
+        weekOptions: input.weekOptions,
+      },
+      update: {
+        weekOptions: input.weekOptions,
+      },
+    });
+  }
+
+  private extractSeasonKeys(values: string[]): string[] {
+    return Array.from(new Set(values.filter((value) => value === 'SUMMER' || value === 'EASTER' || value === 'WINTER')));
+  }
+
+  private toSeasonLabel(seasonKey: string): string {
+    switch (seasonKey) {
+      case 'SUMMER':
+        return 'verano';
+      case 'EASTER':
+        return 'Semana Santa';
+      case 'WINTER':
+        return 'invierno';
+      default:
+        return seasonKey;
     }
   }
 

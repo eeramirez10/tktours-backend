@@ -198,6 +198,7 @@ export const conciergeTools = [
             'studentAge',
             'residenceCountry',
             'cityOfResidence',
+            'tripDays',
             'family',
             'program',
             'accommodation',
@@ -228,6 +229,7 @@ export const conciergeTools = [
             studentAge: { type: 'number' },
             residenceCountry: { type: 'string' },
             cityOfResidence: { type: 'string' },
+            tripDays: { type: 'number' },
             familyKey: { type: 'string', enum: ['CAMP', 'LANGUAGE_COURSE', 'SCHOOL_PROGRAM'] },
             accommodationKey: {
               type: 'string',

@@ -10,7 +10,17 @@ import { ListCatalogLocationsUseCase } from '../../../application/use-cases/list
 import { ListCatalogProgramsUseCase } from '../../../application/use-cases/list-catalog-programs.use-case.js';
 import { ListCatalogRecommendedProgramsUseCase } from '../../../application/use-cases/list-catalog-recommended-programs.use-case.js';
 import { CatalogRepository } from '../../../infrastructure/repositories/catalog.repository.js';
-import { catalogProgramSlugParamsSchema } from '../schemas/catalog-params.schemas.js';
+import {
+  catalogCountryIdParamsSchema,
+  catalogLocationIdParamsSchema,
+  catalogProgramSlugParamsSchema,
+} from '../schemas/catalog-params.schemas.js';
+import {
+  createCatalogCountryBodySchema,
+  createCatalogLocationBodySchema,
+  updateCatalogCountryBodySchema,
+  updateCatalogLocationBodySchema,
+} from '../schemas/catalog-admin.schemas.js';
 import {
   listCatalogCollectionQuerySchema,
   listCatalogLocationsQuerySchema,
@@ -46,6 +56,27 @@ export class CatalogController {
     }
   }
 
+  async createCountry(req: Request, res: Response, next: NextFunction) {
+    try {
+      const body = createCatalogCountryBodySchema.parse(req.body);
+      const data = await catalogRepository.createCountry(body);
+      return res.status(201).json({ ok: true, data });
+    } catch (error) {
+      return next(error instanceof ZodError ? toValidationError(error, 'Invalid create country body') : error);
+    }
+  }
+
+  async updateCountry(req: Request, res: Response, next: NextFunction) {
+    try {
+      const { countryId } = catalogCountryIdParamsSchema.parse(req.params);
+      const body = updateCatalogCountryBodySchema.parse(req.body);
+      const data = await catalogRepository.updateCountry({ countryId, ...body });
+      return res.json({ ok: true, data });
+    } catch (error) {
+      return next(error instanceof ZodError ? toValidationError(error, 'Invalid update country body') : error);
+    }
+  }
+
   async listFamilies(req: Request, res: Response, next: NextFunction) {
     try {
       const query = listCatalogCollectionQuerySchema.parse(req.query);
@@ -63,6 +94,27 @@ export class CatalogController {
       return res.json({ ok: true, data });
     } catch (error) {
       return next(error instanceof ZodError ? toValidationError(error, 'Invalid locations query') : error);
+    }
+  }
+
+  async createLocation(req: Request, res: Response, next: NextFunction) {
+    try {
+      const body = createCatalogLocationBodySchema.parse(req.body);
+      const data = await catalogRepository.createLocation(body);
+      return res.status(201).json({ ok: true, data });
+    } catch (error) {
+      return next(error instanceof ZodError ? toValidationError(error, 'Invalid create location body') : error);
+    }
+  }
+
+  async updateLocation(req: Request, res: Response, next: NextFunction) {
+    try {
+      const { locationId } = catalogLocationIdParamsSchema.parse(req.params);
+      const body = updateCatalogLocationBodySchema.parse(req.body);
+      const data = await catalogRepository.updateLocation({ locationId, ...body });
+      return res.json({ ok: true, data });
+    } catch (error) {
+      return next(error instanceof ZodError ? toValidationError(error, 'Invalid update location body') : error);
     }
   }
 

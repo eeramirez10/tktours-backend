@@ -28,13 +28,15 @@ type DetectedIntent =
   | 'REQUEST_QUOTE'
   | 'ASK_LANGUAGE_COURSES'
   | 'ASK_CAMPS'
+  | 'ASK_CIRCUITS'
   | 'UNKNOWN';
 
 type ExtractedInquiryFields = {
-  countryCode: 'CA' | 'US' | 'GB' | 'IT' | 'FR' | 'IE' | null;
+  countryCode: 'CA' | 'US' | 'GB' | 'IT' | 'FR' | 'IE' | 'MX' | 'EUROPE' | 'SOUTH_AMERICA' | 'ASIA' | 'OTHER_DESTINATIONS' | null;
   studentAge: number | null;
   residenceCountry: string | null;
   cityOfResidence: string | null;
+  tripDays: number | null;
   familyKey: 'CAMP' | 'LANGUAGE_COURSE' | 'SCHOOL_PROGRAM' | null;
   accommodationKey: 'HOST_FAMILY' | 'UNIVERSITY_RESIDENCE' | 'SHARED_APARTMENT' | null;
   preferredStartMonth: number | null;
@@ -53,7 +55,7 @@ type PolicySignals = {
   asksAccommodationOptions: boolean;
   isNegativeProgramAnswer: boolean;
   handoffStep: 'ask_name' | 'ask_email' | 'confirm_handoff' | 'none';
-  resolvedCountryCode: 'CA' | 'US' | 'GB' | 'IT' | 'FR' | 'IE' | null;
+  resolvedCountryCode: ExtractedInquiryFields['countryCode'];
   confidence: number;
   needsClarification: boolean;
 };
@@ -73,6 +75,7 @@ const defaultExtractedFields: ExtractedInquiryFields = {
   studentAge: null,
   residenceCountry: null,
   cityOfResidence: null,
+  tripDays: null,
   familyKey: null,
   accommodationKey: null,
   preferredStartMonth: null,
@@ -190,9 +193,11 @@ export class ConciergeToolExecutorService {
       '- REQUEST_QUOTE',
       '- ASK_LANGUAGE_COURSES',
       '- ASK_CAMPS',
+      '- ASK_CIRCUITS',
       '- UNKNOWN',
       'Use UNKNOWN when uncertain.',
       'Interpret short confirmations only with context from recent messages.',
+      'Use ASK_CIRCUITS when the user asks for tours, circuitos, itinerarios o viajes por destinos como Europa, México, Sudamérica o Asia.',
     ].join('\n');
 
     const llmResult = await this.askJson<{ intent?: string; confidence?: number; menuWasShown?: boolean }>(prompt, {
@@ -210,6 +215,7 @@ export class ConciergeToolExecutorService {
       'REQUEST_QUOTE',
       'ASK_LANGUAGE_COURSES',
       'ASK_CAMPS',
+      'ASK_CIRCUITS',
       'UNKNOWN',
     ]);
 
@@ -245,6 +251,11 @@ export class ConciergeToolExecutorService {
       'When expectedField is accommodation, only fill accommodationKey if accommodation is explicit.',
       'Do not infer unrelated fields from short replies.',
       'Handle Spanish and Latin American answers naturally.',
+      'If expectedField is country and latestMessage is México or Mexico, return countryCode="MX".',
+      'If expectedField is country and latestMessage is Europa, return countryCode="EUROPE".',
+      'If expectedField is country and latestMessage is Sudamérica, Sudamerica or Suramérica, return countryCode="SOUTH_AMERICA".',
+      'If expectedField is country and latestMessage is Asia, Asía, Países Asiáticos or Paises Asiaticos, return countryCode="ASIA".',
+      'If expectedField is country and latestMessage is Otros destinos, return countryCode="OTHER_DESTINATIONS".',
       'If expectedField is residenceCountry and latestMessage is a country name like México, Mexico, Colombia, Chile, Perú, Argentina, Ecuador, Guatemala, return that as residenceCountry.',
       'If expectedField is residenceCountry and latestMessage is clearly a city like Monterrey, Guadalajara, CDMX, Bogotá, Lima, return it as cityOfResidence and keep residenceCountry null.',
       'If expectedField is cityOfResidence and latestMessage is a city, return cityOfResidence.',
@@ -256,8 +267,8 @@ export class ConciergeToolExecutorService {
       '- expectedField=cityOfResidence, latestMessage="Monterrey" => cityOfResidence="Monterrey".',
       '- latestMessage="Vivo en México, en Guadalajara" => residenceCountry="México", cityOfResidence="Guadalajara".',
       'Return strict JSON exactly with keys:',
-      '{"countryCode","studentAge","residenceCountry","cityOfResidence","familyKey","accommodationKey","preferredStartMonth","preferredStartYear","preferredStartUndecided","weeks","weeksUndecided","firstName","lastName","email","confidence"}',
-      'Allowed countryCode: CA, US, GB, IT, FR, IE, or null.',
+      '{"countryCode","studentAge","residenceCountry","cityOfResidence","tripDays","familyKey","accommodationKey","preferredStartMonth","preferredStartYear","preferredStartUndecided","weeks","weeksUndecided","firstName","lastName","email","confidence"}',
+      'Allowed countryCode: CA, US, GB, IT, FR, IE, MX, EUROPE, SOUTH_AMERICA, ASIA, OTHER_DESTINATIONS, or null.',
       'Allowed familyKey: CAMP, LANGUAGE_COURSE, SCHOOL_PROGRAM, or null.',
       'Allowed accommodationKey: HOST_FAMILY, UNIVERSITY_RESIDENCE, SHARED_APARTMENT, or null.',
       'preferredStartMonth must be 1..12 or null.',
@@ -316,6 +327,7 @@ export class ConciergeToolExecutorService {
       studentAge: this.asPositiveInt(llmResult?.studentAge),
       residenceCountry: this.asNonEmptyString(llmResult?.residenceCountry),
       cityOfResidence: this.asNonEmptyString(llmResult?.cityOfResidence),
+      tripDays: this.asPositiveInt(llmResult?.tripDays),
       familyKey: this.asFamilyKey(llmResult?.familyKey),
       accommodationKey: this.asAccommodationKey(llmResult?.accommodationKey),
       preferredStartMonth: this.asMonth(llmResult?.preferredStartMonth),
@@ -331,7 +343,17 @@ export class ConciergeToolExecutorService {
   }
 
   private asCountryCode(value: unknown): ExtractedInquiryFields['countryCode'] {
-    return value === 'CA' || value === 'US' || value === 'GB' || value === 'IT' || value === 'FR' || value === 'IE'
+    return value === 'CA' ||
+      value === 'US' ||
+      value === 'GB' ||
+      value === 'IT' ||
+      value === 'FR' ||
+      value === 'IE' ||
+      value === 'MX' ||
+      value === 'EUROPE' ||
+      value === 'SOUTH_AMERICA' ||
+      value === 'ASIA' ||
+      value === 'OTHER_DESTINATIONS'
       ? value
       : null;
   }
@@ -516,7 +538,16 @@ export class ConciergeToolExecutorService {
         country: { select: { code: true, name: true } },
         family: { select: { key: true, name: true } },
         location: { select: { slug: true, name: true, venueName: true } },
-        program: { select: { slug: true, name: true } },
+        program: {
+          select: {
+            slug: true,
+            name: true,
+            startWindows: {
+              where: { active: true },
+              select: { seasonKey: true },
+            },
+          },
+        },
         versions: {
           where: { isCurrent: true },
           take: 1,
@@ -554,6 +585,9 @@ export class ConciergeToolExecutorService {
         venueName: resource.location?.venueName ?? null,
         programSlug: resource.program?.slug ?? null,
         programName: resource.program?.name ?? null,
+        programSeasonKeys: Array.from(
+          new Set((resource.program?.startWindows ?? []).map((window) => window.seasonKey).filter(Boolean)),
+        ),
         currentVersion: resource.versions[0]
           ? {
               id: resource.versions[0].id,
@@ -649,8 +683,20 @@ export class ConciergeToolExecutorService {
     const minWeeks = minCandidates.length > 0 ? Math.min(...minCandidates) : null;
     const maxWeeks = maxCandidates.length > 0 ? Math.max(...maxCandidates) : null;
 
-    // Solo valores explícitos que existen en BD (sin generar rangos artificiales).
-    const options = [...new Set([...minCandidates, ...maxCandidates])].sort((a, b) => a - b);
+    const explicitOptions = filteredPrograms.flatMap((program) =>
+      Array.isArray(program.weekOptions)
+        ? program.weekOptions.filter((value): value is number => typeof value === 'number' && Number.isFinite(value) && value > 0)
+        : [],
+    );
+
+    const fallbackRangeOptions =
+      explicitOptions.length === 0 && minWeeks != null && maxWeeks != null && maxWeeks >= minWeeks && maxWeeks - minWeeks <= 12
+        ? Array.from({ length: maxWeeks - minWeeks + 1 }, (_, index) => minWeeks + index)
+        : [];
+
+    const options = explicitOptions.length > 0
+      ? [...new Set(explicitOptions)].sort((a, b) => a - b)
+      : [...new Set([...fallbackRangeOptions, ...minCandidates, ...maxCandidates])].sort((a, b) => a - b);
 
     return {
       countryCode: args.countryCode ?? null,
@@ -664,6 +710,7 @@ export class ConciergeToolExecutorService {
         name: program.name,
         minWeeks: program.minWeeks,
         maxWeeks: program.maxWeeks,
+        weekOptions: program.weekOptions,
       })),
     };
   }
@@ -699,6 +746,16 @@ export class ConciergeToolExecutorService {
         return 'Francia';
       case 'IE':
         return 'Irlanda';
+      case 'MX':
+        return 'México';
+      case 'EUROPE':
+        return 'Europa';
+      case 'SOUTH_AMERICA':
+        return 'Sudamérica';
+      case 'ASIA':
+        return 'Países Asiáticos';
+      case 'OTHER_DESTINATIONS':
+        return 'Otros destinos';
       default:
         return fallbackName;
     }

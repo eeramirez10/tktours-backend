@@ -26,6 +26,38 @@ const optionalNullableTrimmedStringSchema = z.preprocess((value) => {
   return trimmed === '' ? null : trimmed;
 }, z.string().nullable().optional());
 
+const optionalWeekOptionsSchema = z.preprocess((value) => {
+  if (value === undefined || value === null || value === '') {
+    return undefined;
+  }
+
+  if (Array.isArray(value)) {
+    return value;
+  }
+
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    if (trimmed === '') {
+      return undefined;
+    }
+
+    try {
+      const parsed = JSON.parse(trimmed);
+      if (Array.isArray(parsed)) {
+        return parsed;
+      }
+    } catch {
+      return trimmed
+        .split(',')
+        .map((item) => Number(item.trim()))
+        .filter((item) => Number.isFinite(item));
+    }
+  }
+
+  return value;
+}, z.array(z.number().int().min(1).max(104)).max(52).optional())
+  .transform((value) => (value ? Array.from(new Set(value)).sort((a, b) => a - b) : undefined));
+
 const initialVersionSchema = z
   .discriminatedUnion('sourceType', [
     z.object({
@@ -59,6 +91,7 @@ export const createResourceBodySchema = z
     month: z.number().int().min(1).max(12).nullable().optional(),
     year: z.number().int().min(2000).max(2100).nullable().optional(),
     active: z.boolean().optional(),
+    weekOptions: optionalWeekOptionsSchema,
     createdById: optionalNullableTrimmedStringSchema,
     initialVersion: initialVersionSchema,
   })
@@ -85,6 +118,7 @@ export const createResourceBodySchema = z
     month,
     year,
     active,
+    weekOptions,
     createdById,
     initialVersion,
   }) => ({
@@ -101,6 +135,7 @@ export const createResourceBodySchema = z
     month: month ?? null,
     year: year ?? null,
     active: active ?? true,
+    weekOptions,
     createdById: createdById ?? null,
     initialVersion: initialVersion ?? null,
   }));

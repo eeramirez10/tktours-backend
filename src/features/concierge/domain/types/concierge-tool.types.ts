@@ -105,6 +105,7 @@ export type ExtractInquiryFieldsArgs = {
     | 'studentAge'
     | 'residenceCountry'
     | 'cityOfResidence'
+    | 'tripDays'
     | 'family'
     | 'program'
     | 'accommodation'
@@ -123,6 +124,7 @@ export type ExtractInquiryFieldsArgs = {
     studentAge?: number | null;
     residenceCountry?: string | null;
     cityOfResidence?: string | null;
+    tripDays?: number | null;
     familyKey?: 'CAMP' | 'LANGUAGE_COURSE' | 'SCHOOL_PROGRAM' | null;
     accommodationKey?: 'HOST_FAMILY' | 'UNIVERSITY_RESIDENCE' | 'SHARED_APARTMENT' | null;
     preferredStartMonth?: number | null;

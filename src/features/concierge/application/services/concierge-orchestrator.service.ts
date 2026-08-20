@@ -27,19 +27,27 @@ type CampBrochureCandidate = {
   resourceTitle: string;
   countryCode: string;
   countryName: string | null;
+  programSlug: string | null;
+  programName: string | null;
   locationSlug: string | null;
   locationName: string | null;
+  seasonKeys: string[];
   versionId: string;
   fileName: string;
   fileUrl: string;
   mimeType: string | null;
 };
 
+type CircuitResourceCandidate = CampBrochureCandidate & {
+  description: string | null;
+  summary: string | null;
+};
+
 type CampBrochureStateStatus = 'READY' | 'OFFERED' | 'SENT' | 'DECLINED' | 'UNAVAILABLE';
 
 type CampBrochureState = {
   status: CampBrochureStateStatus;
-  candidate: CampBrochureCandidate | null;
+  candidates: CampBrochureCandidate[];
   checkedAt: string;
   offeredAt: string | null;
   sentAt: string | null;
@@ -180,6 +188,7 @@ export class ConciergeOrchestratorService {
         activeInquiryId: context.activeInquiry?.id ?? null,
         replyText: normalized.replyText,
         mediaUrl: policyResult.outboundMediaUrl ?? null,
+        mediaUrls: policyResult.outboundMediaUrls ?? null,
         nextStage: normalized.nextStage ?? null,
         shouldRefreshRecommendations: normalized.shouldRefreshRecommendations ?? false,
         responseId: finalResponseId,
@@ -271,6 +280,7 @@ export class ConciergeOrchestratorService {
         studentAge: context.activeInquiry.studentAge,
         residenceCountry: this.getResidenceCountryFromInquiry(context.activeInquiry),
         cityOfResidence: context.activeInquiry.cityOfResidence,
+        tripDays: this.getTripDaysFromInquiry(context.activeInquiry),
         familyKey: context.activeInquiry.family?.key ?? null,
         accommodationKey: context.activeInquiry.accommodationType?.key ?? null,
         preferredStartMonth: context.activeInquiry.preferredStartMonth,
@@ -344,6 +354,12 @@ export class ConciergeOrchestratorService {
     }
 
     if (qualificationJsonChanged) {
+      inquiryUpdate.qualificationJson = qualificationJson;
+    }
+
+    const tripDays = (extracted as { tripDays?: unknown }).tripDays;
+    if (typeof tripDays === 'number' && Number.isFinite(tripDays) && tripDays > 0) {
+      qualificationJson.tripDays = Math.floor(tripDays);
       inquiryUpdate.qualificationJson = qualificationJson;
     }
 
@@ -561,6 +577,7 @@ export class ConciergeOrchestratorService {
     };
     contextPatch?: Record<string, unknown> | null;
     outboundMediaUrl?: string | null;
+    outboundMediaUrls?: string[] | null;
   }> {
     const detectedIntent = await this.detectIntentWithTool(context);
     const policySignals = await this.evaluatePolicySignalsWithTool(context);
@@ -590,6 +607,7 @@ export class ConciergeOrchestratorService {
         },
         contextPatch,
         outboundMediaUrl: null,
+        outboundMediaUrls: null,
       };
     }
 
@@ -615,6 +633,7 @@ export class ConciergeOrchestratorService {
         },
         contextPatch,
         outboundMediaUrl: null,
+        outboundMediaUrls: null,
       };
     }
 
@@ -659,16 +678,41 @@ export class ConciergeOrchestratorService {
       };
     }
 
-    const nextField = enforcedField ?? this.getFirstStillMissingField(parsed.missingFields, context.activeInquiry);
+    const modelMissingFields = this.sanitizeMissingFieldsForInquiry(parsed.missingFields, context.activeInquiry);
+    const nextField = enforcedField ?? this.getFirstStillMissingField(modelMissingFields, context.activeInquiry);
     const brochureReplyAction = await this.resolveCampBrochureReplyAction(context, campBrochureState);
 
-    if (brochureReplyAction === 'SEND' && campBrochureState?.candidate) {
+    if (brochureReplyAction.action === 'SEND' && campBrochureState?.candidates.length) {
+      const selectedCandidates = this.selectCampBrochureCandidatesForReply(campBrochureState.candidates, brochureReplyAction);
+      if (selectedCandidates.length === 0) {
+        const replyText = await this.buildPromptDrivenCampBrochureSeasonChoice({
+          context,
+          candidates: campBrochureState.candidates,
+        });
+        return {
+          structured: {
+            ...parsed,
+            replyText,
+            shouldAskFollowUp: true,
+            nextStage: 'SEND_RESOURCE',
+            missingFields: [],
+            shouldRefreshRecommendations: false,
+          },
+          trace: {
+            strategy: 'single_follow_up',
+            details: {
+              reason: 'camp_brochure_season_clarify_after_send',
+            },
+          },
+          contextPatch,
+        };
+      }
       if (context.activeInquiry?.id) {
-        await this.recordCampBrochureSend(context.activeInquiry.id, campBrochureState.candidate);
+        await this.recordCampBrochureSend(context.activeInquiry.id, selectedCandidates);
       }
       const sendReply = await this.buildPromptDrivenCampBrochureSend({
         context,
-        candidate: campBrochureState.candidate,
+        candidates: selectedCandidates,
       });
       const followUp = nextField
         ? await this.buildPromptDrivenFollowUp({
@@ -700,16 +744,41 @@ export class ConciergeOrchestratorService {
           strategy: followUp ? 'single_follow_up' : 'none',
           details: {
             reason: 'camp_brochure_sent',
-            resourceId: campBrochureState.candidate.resourceId,
+            resourceIds: selectedCandidates.map((candidate) => candidate.resourceId),
             nextField: nextField ?? null,
           },
         },
         contextPatch,
-        outboundMediaUrl: this.toAbsoluteMediaUrl(campBrochureState.candidate.fileUrl),
+        outboundMediaUrl: this.toAbsoluteMediaUrl(selectedCandidates[0]?.fileUrl ?? null),
+        outboundMediaUrls: this.toAbsoluteMediaUrls(selectedCandidates.map((candidate) => candidate.fileUrl)),
       };
     }
 
-    if (brochureReplyAction === 'DECLINE' && campBrochureState) {
+    if (brochureReplyAction.action === 'CLARIFY' && campBrochureState?.candidates.length) {
+      const replyText = await this.buildPromptDrivenCampBrochureSeasonChoice({
+        context,
+        candidates: campBrochureState.candidates,
+      });
+      return {
+        structured: {
+          ...parsed,
+          replyText,
+          shouldAskFollowUp: true,
+          nextStage: 'SEND_RESOURCE',
+          missingFields: [],
+          shouldRefreshRecommendations: false,
+        },
+        trace: {
+          strategy: 'single_follow_up',
+          details: {
+            reason: 'camp_brochure_season_choice',
+          },
+        },
+        contextPatch,
+      };
+    }
+
+    if (brochureReplyAction.action === 'DECLINE' && campBrochureState) {
       const nowIso = new Date().toISOString();
       contextPatch = this.mergeContextPatch(contextPatch, {
         [this.campBrochureContextKey]: {
@@ -723,7 +792,7 @@ export class ConciergeOrchestratorService {
     if (this.shouldOfferCampBrochure(context, nextField, campBrochureState)) {
       const offerReply = await this.buildPromptDrivenCampBrochureOffer({
         context,
-        candidate: campBrochureState!.candidate!,
+        candidates: campBrochureState!.candidates,
       });
       const nowIso = new Date().toISOString();
       contextPatch = this.mergeContextPatch(contextPatch, {
@@ -748,8 +817,65 @@ export class ConciergeOrchestratorService {
           strategy: 'single_follow_up',
           details: {
             reason: 'camp_brochure_offer',
-            resourceId: campBrochureState?.candidate?.resourceId ?? null,
+            resourceIds: campBrochureState?.candidates.map((candidate) => candidate.resourceId) ?? [],
             nextField: nextField ?? null,
+          },
+        },
+        contextPatch,
+      };
+    }
+
+    if (!nextField && this.isCircuitsInquiry(context.activeInquiry)) {
+      const circuitCandidate = await this.findMatchingCircuitResourceCandidate(context);
+      if (circuitCandidate) {
+        if (context.activeInquiry?.id) {
+          await this.recordResourceSend(context.activeInquiry.id, circuitCandidate, 'circuits_itinerary_match');
+        }
+        const replyText = await this.buildPromptDrivenCircuitResourceSend({
+          context,
+          candidate: circuitCandidate,
+        });
+        return {
+          structured: {
+            ...parsed,
+            replyText,
+            nextStage: 'SEND_RESOURCE',
+            shouldAskFollowUp: false,
+            missingFields: [],
+            shouldRefreshRecommendations: false,
+          },
+          trace: {
+            strategy: 'none',
+            details: {
+              reason: 'circuits_resource_sent',
+              resourceId: circuitCandidate.resourceId,
+              tripDays: this.getTripDaysFromInquiry(context.activeInquiry),
+            },
+          },
+          contextPatch,
+          outboundMediaUrl: this.toAbsoluteMediaUrl(circuitCandidate.fileUrl),
+          outboundMediaUrls: this.toAbsoluteMediaUrls([circuitCandidate.fileUrl]),
+        };
+      }
+
+      const replyText = await this.buildPromptDrivenCircuitNoMatch({
+        context,
+        fallbackReplyText: parsed.replyText,
+      });
+      return {
+        structured: {
+          ...parsed,
+          replyText,
+          nextStage: 'ESCALATED',
+          shouldAskFollowUp: false,
+          missingFields: [],
+          shouldRefreshRecommendations: false,
+        },
+        trace: {
+          strategy: 'none',
+          details: {
+            reason: 'circuits_no_matching_resource',
+            tripDays: this.getTripDaysFromInquiry(context.activeInquiry),
           },
         },
         contextPatch,
@@ -821,13 +947,13 @@ export class ConciergeOrchestratorService {
     }
 
     const existing = this.getCampBrochureStateFromContext(context);
-    const resolved = await this.findCampBrochureCandidate(context);
+    const resolved = await this.findCampBrochureCandidates(context);
     const nowIso = new Date().toISOString();
 
-    if (!resolved) {
+    if (!resolved.length) {
       const unavailable: CampBrochureState = {
         status: 'UNAVAILABLE',
-        candidate: null,
+        candidates: [],
         checkedAt: nowIso,
         offeredAt: null,
         sentAt: null,
@@ -840,13 +966,13 @@ export class ConciergeOrchestratorService {
       };
     }
 
-    const keepOffered = existing?.status === 'OFFERED' && existing.candidate?.versionId === resolved.versionId;
-    const keepSent = existing?.status === 'SENT' && existing.candidate?.versionId === resolved.versionId;
-    const keepDeclined = existing?.status === 'DECLINED' && existing.candidate?.versionId === resolved.versionId;
+    const keepOffered = existing?.status === 'OFFERED' && this.haveSameCampBrochureCandidates(existing.candidates, resolved);
+    const keepSent = existing?.status === 'SENT' && this.haveSameCampBrochureCandidates(existing.candidates, resolved);
+    const keepDeclined = existing?.status === 'DECLINED' && this.haveSameCampBrochureCandidates(existing.candidates, resolved);
 
     const state: CampBrochureState = {
       status: keepSent ? 'SENT' : keepOffered ? 'OFFERED' : keepDeclined ? 'DECLINED' : 'READY',
-      candidate: resolved,
+      candidates: resolved,
       checkedAt: nowIso,
       offeredAt: keepOffered ? existing?.offeredAt ?? nowIso : null,
       sentAt: keepSent ? existing?.sentAt ?? nowIso : null,
@@ -877,12 +1003,15 @@ export class ConciergeOrchestratorService {
       return null;
     }
 
-    const candidateRaw = (raw as Record<string, unknown>).candidate;
-    const candidate = this.normalizeCampBrochureCandidate(candidateRaw);
+    const candidatesRaw = (raw as Record<string, unknown>).candidates;
+    const candidates = Array.isArray(candidatesRaw)
+      ? candidatesRaw.map((candidate) => this.normalizeCampBrochureCandidate(candidate)).filter((candidate): candidate is CampBrochureCandidate => candidate !== null)
+      : [];
+    const legacyCandidate = candidates.length === 0 ? this.normalizeCampBrochureCandidate((raw as Record<string, unknown>).candidate) : null;
 
     return {
       status: status as CampBrochureStateStatus,
-      candidate,
+      candidates: legacyCandidate ? [legacyCandidate] : candidates,
       checkedAt: this.asIsoString((raw as Record<string, unknown>).checkedAt) ?? new Date().toISOString(),
       offeredAt: this.asIsoString((raw as Record<string, unknown>).offeredAt),
       sentAt: this.asIsoString((raw as Record<string, unknown>).sentAt),
@@ -908,8 +1037,13 @@ export class ConciergeOrchestratorService {
       resourceTitle,
       countryCode,
       countryName: this.asNonEmptyStringValue(payload.countryName),
+      programSlug: this.asNonEmptyStringValue(payload.programSlug),
+      programName: this.asNonEmptyStringValue(payload.programName),
       locationSlug: this.asNonEmptyStringValue(payload.locationSlug),
       locationName: this.asNonEmptyStringValue(payload.locationName),
+      seasonKeys: Array.isArray(payload.seasonKeys)
+        ? payload.seasonKeys.filter((item): item is string => typeof item === 'string' && item.trim().length > 0)
+        : [],
       versionId,
       fileName,
       fileUrl: this.toPublicUrl(fileUrl),
@@ -928,11 +1062,11 @@ export class ConciergeOrchestratorService {
     return parsed.toISOString();
   }
 
-  private async findCampBrochureCandidate(context: ConciergeTurnContext): Promise<CampBrochureCandidate | null> {
+  private async findCampBrochureCandidates(context: ConciergeTurnContext): Promise<CampBrochureCandidate[]> {
     const inquiry = context.activeInquiry;
     const countryCode = inquiry?.country?.code ?? null;
     if (!inquiry || inquiry.family?.key !== 'CAMP' || !countryCode) {
-      return null;
+      return [];
     }
 
     const locationSlug = inquiry.location?.slug ?? undefined;
@@ -943,16 +1077,23 @@ export class ConciergeOrchestratorService {
         })
       : [];
 
-    if (byLocation.length > 0) {
-      const candidate = this.toCampBrochureCandidate(byLocation[0]);
-      if (candidate) return candidate;
+    const locationCandidates = byLocation
+      .map((resource) => this.toCampBrochureCandidate(resource))
+      .filter((candidate): candidate is CampBrochureCandidate => candidate !== null);
+    const seasonalLocationCandidates = this.getSeasonalCampBrochureCandidates(locationCandidates);
+    if (seasonalLocationCandidates.length > 0) {
+      return seasonalLocationCandidates;
     }
 
     const byCountry = await this.queryCampBrochureResources({
       countryCode,
     });
 
-    return byCountry.length > 0 ? this.toCampBrochureCandidate(byCountry[0]) : null;
+    const countryCandidates = byCountry
+      .map((resource) => this.toCampBrochureCandidate(resource))
+      .filter((candidate): candidate is CampBrochureCandidate => candidate !== null);
+
+    return this.getSeasonalCampBrochureCandidates(countryCandidates);
   }
 
   private async queryCampBrochureResources(input: {
@@ -973,6 +1114,32 @@ export class ConciergeOrchestratorService {
 
     const resources = (result as Record<string, unknown>).resources;
     return Array.isArray(resources) ? (resources.filter((item) => item && typeof item === 'object') as Array<Record<string, unknown>>) : [];
+  }
+
+  private getSeasonalCampBrochureCandidates(candidates: CampBrochureCandidate[]): CampBrochureCandidate[] {
+    const bySeason = new Map<string, CampBrochureCandidate>();
+
+    for (const candidate of candidates) {
+      const seasonKey = this.getPrimarySeasonKey(candidate.seasonKeys);
+      if (!seasonKey) continue;
+      if (!bySeason.has(seasonKey)) {
+        bySeason.set(seasonKey, candidate);
+      }
+    }
+
+    const order = ['SUMMER', 'EASTER', 'WINTER'];
+    return [...bySeason.values()].sort((left, right) => {
+      const leftSeason = this.getPrimarySeasonKey(left.seasonKeys) ?? '';
+      const rightSeason = this.getPrimarySeasonKey(right.seasonKeys) ?? '';
+      const leftOrder = order.indexOf(leftSeason);
+      const rightOrder = order.indexOf(rightSeason);
+      const normalizedLeft = leftOrder === -1 ? Number.MAX_SAFE_INTEGER : leftOrder;
+      const normalizedRight = rightOrder === -1 ? Number.MAX_SAFE_INTEGER : rightOrder;
+      if (normalizedLeft !== normalizedRight) {
+        return normalizedLeft - normalizedRight;
+      }
+      return left.resourceTitle.localeCompare(right.resourceTitle, 'es');
+    });
   }
 
   private toCampBrochureCandidate(resource: Record<string, unknown>): CampBrochureCandidate | null {
@@ -997,8 +1164,13 @@ export class ConciergeOrchestratorService {
       resourceTitle,
       countryCode,
       countryName: this.asNonEmptyStringValue(resource.countryName),
+      programSlug: this.asNonEmptyStringValue(resource.programSlug),
+      programName: this.asNonEmptyStringValue(resource.programName),
       locationSlug: this.asNonEmptyStringValue(resource.locationSlug),
       locationName: this.asNonEmptyStringValue(resource.locationName),
+      seasonKeys: Array.isArray(resource.programSeasonKeys)
+        ? resource.programSeasonKeys.filter((item): item is string => typeof item === 'string' && item.trim().length > 0)
+        : [],
       versionId,
       fileName,
       fileUrl: this.toPublicUrl(fileUrl),
@@ -1032,25 +1204,96 @@ export class ConciergeOrchestratorService {
     return /^https?:\/\//i.test(normalized) ? normalized : null;
   }
 
+  private toAbsoluteMediaUrls(pathOrUrls: string[]): string[] {
+    return Array.from(
+      new Set(
+        pathOrUrls
+          .map((pathOrUrl) => this.toAbsoluteMediaUrl(pathOrUrl))
+          .filter((url): url is string => typeof url === 'string' && url.trim().length > 0),
+      ),
+    );
+  }
+
+  private haveSameCampBrochureCandidates(
+    left: CampBrochureCandidate[],
+    right: CampBrochureCandidate[],
+  ): boolean {
+    const leftKeys = left.map((candidate) => candidate.versionId).sort();
+    const rightKeys = right.map((candidate) => candidate.versionId).sort();
+    return leftKeys.length === rightKeys.length && leftKeys.every((value, index) => value === rightKeys[index]);
+  }
+
+  private getPrimarySeasonKey(seasonKeys: string[]): string | null {
+    const normalized = seasonKeys.find((seasonKey) => ['SUMMER', 'EASTER', 'WINTER'].includes(seasonKey));
+    return normalized ?? null;
+  }
+
+  private getCampBrochureSeasonLabels(candidates: CampBrochureCandidate[]): string[] {
+    return Array.from(
+      new Set(
+        candidates
+          .map((candidate) => this.getPrimarySeasonKey(candidate.seasonKeys))
+          .filter((seasonKey): seasonKey is string => Boolean(seasonKey))
+          .map((seasonKey) => this.toSeasonLabel(seasonKey)),
+      ),
+    );
+  }
+
+  private toSeasonLabel(seasonKey: string): string {
+    switch (seasonKey) {
+      case 'SUMMER':
+        return 'verano';
+      case 'EASTER':
+        return 'Semana Santa';
+      case 'WINTER':
+        return 'invierno';
+      default:
+        return seasonKey;
+    }
+  }
+
+  private fromSeasonLabel(label: string): string | null {
+    switch (label) {
+      case 'verano':
+        return 'SUMMER';
+      case 'Semana Santa':
+        return 'EASTER';
+      case 'invierno':
+        return 'WINTER';
+      default:
+        return null;
+    }
+  }
+
   private async resolveCampBrochureReplyAction(
     context: ConciergeTurnContext,
     state: CampBrochureState | null,
-  ): Promise<'SEND' | 'DECLINE' | 'UNKNOWN'> {
+  ): Promise<{
+    action: 'SEND' | 'DECLINE' | 'CLARIFY' | 'UNKNOWN';
+    selectedSeasonKeys: string[];
+    sendAll: boolean;
+  }> {
     if (!state || (state.status !== 'OFFERED' && state.status !== 'SENT')) {
-      return 'UNKNOWN';
+      return { action: 'UNKNOWN', selectedSeasonKeys: [], sendAll: false };
     }
 
     const latestMessage = context.latestMessage;
     if (!latestMessage || latestMessage.direction !== 'INBOUND') {
-      return 'UNKNOWN';
+      return { action: 'UNKNOWN', selectedSeasonKeys: [], sendAll: false };
     }
 
     const previousOutbound = this.findPreviousOutboundMessage(context);
+    const seasonOptions = this.getCampBrochureSeasonLabels(state.candidates);
+    const hasMultipleSeasonOptions = seasonOptions.length > 1;
     const instructions = [
       'Clasifica la respuesta del usuario sobre un ofrecimiento de folleto PDF.',
-      'Devuelve JSON estricto con la forma {"action":"SEND|DECLINE|UNKNOWN","confidence":number}.',
-      'Estado OFFERED: SEND si el usuario confirma que sí quiere que le envíen el folleto.',
+      'Devuelve JSON estricto con la forma {"action":"SEND|DECLINE|CLARIFY|UNKNOWN","confidence":number,"selectedSeasonKeys":string[],"sendAll":boolean}.',
+      'selectedSeasonKeys solo puede contener SUMMER, EASTER y/o WINTER.',
+      'Estado OFFERED: SEND si el usuario confirma que sí quiere que le envíen el folleto y ya dejó clara la temporada o solo existe una opción.',
+      'Estado OFFERED con varias temporadas: CLARIFY si el usuario responde que sí, pero no especifica cuál quiere.',
+      'Estado OFFERED con varias temporadas: SEND si el usuario elige una o varias temporadas específicas, o si pide todas.',
       'Estado SENT: SEND si el usuario pide que lo reenvíen, dice que no le llegó, que no ve el archivo, que lo comparta otra vez o insiste en recibir el PDF.',
+      'Si el usuario pide todo, márcalo como sendAll=true.',
       'DECLINE: el usuario rechaza, pospone o dice que no quiere folleto.',
       'UNKNOWN: no está claro, responde una pregunta diferente o continúa dando datos del flujo.',
       'No inventes; usa contexto de latestMessage y previousAssistantMessage.',
@@ -1061,7 +1304,14 @@ export class ConciergeOrchestratorService {
         instructions,
         input: JSON.stringify({
           brochureState: state.status,
-          brochureTitle: state.candidate?.resourceTitle ?? null,
+          brochureTitles: state.candidates.map((candidate) => candidate.resourceTitle),
+          brochureSeasons: this.getCampBrochureSeasonLabels(state.candidates),
+          seasonOptions: seasonOptions.map((label, index) => ({
+            number: index + 1,
+            label,
+            seasonKey: this.fromSeasonLabel(label),
+          })),
+          hasMultipleSeasonOptions,
           latestMessage: latestMessage.text,
           previousAssistantMessage: previousOutbound?.text ?? null,
           recentMessages: (context.conversation?.messages ?? []).slice(-10).map((message) => ({
@@ -1071,15 +1321,48 @@ export class ConciergeOrchestratorService {
         }),
       });
 
-      const parsed = JSON.parse(response.outputText) as { action?: unknown; confidence?: unknown };
+      const parsed = JSON.parse(response.outputText) as {
+        action?: unknown;
+        confidence?: unknown;
+        selectedSeasonKeys?: unknown;
+        sendAll?: unknown;
+      };
       const action = parsed?.action;
-      if (action === 'SEND' || action === 'DECLINE' || action === 'UNKNOWN') {
-        return action;
+      const selectedSeasonKeys = Array.isArray(parsed?.selectedSeasonKeys)
+        ? parsed.selectedSeasonKeys.filter((item): item is string => item === 'SUMMER' || item === 'EASTER' || item === 'WINTER')
+        : [];
+      const sendAll = parsed?.sendAll === true;
+
+      if (action === 'SEND' || action === 'DECLINE' || action === 'CLARIFY' || action === 'UNKNOWN') {
+        return {
+          action,
+          selectedSeasonKeys,
+          sendAll,
+        };
       }
-      return 'UNKNOWN';
+      return { action: 'UNKNOWN', selectedSeasonKeys: [], sendAll: false };
     } catch {
-      return 'UNKNOWN';
+      return { action: 'UNKNOWN', selectedSeasonKeys: [], sendAll: false };
     }
+  }
+
+  private selectCampBrochureCandidatesForReply(
+    candidates: CampBrochureCandidate[],
+    replyAction: { selectedSeasonKeys: string[]; sendAll: boolean },
+  ): CampBrochureCandidate[] {
+    if (replyAction.sendAll || candidates.length <= 1) {
+      return candidates;
+    }
+
+    if (!replyAction.selectedSeasonKeys.length) {
+      return [];
+    }
+
+    const selectedSet = new Set(replyAction.selectedSeasonKeys);
+    return candidates.filter((candidate) => {
+      const primarySeason = this.getPrimarySeasonKey(candidate.seasonKeys);
+      return primarySeason ? selectedSet.has(primarySeason) : false;
+    });
   }
 
   private shouldOfferCampBrochure(
@@ -1089,6 +1372,7 @@ export class ConciergeOrchestratorService {
       | 'studentAge'
       | 'residenceCountry'
       | 'cityOfResidence'
+      | 'tripDays'
       | 'family'
       | 'program'
       | 'accommodation'
@@ -1102,7 +1386,7 @@ export class ConciergeOrchestratorService {
   ): boolean {
     if (!context.activeInquiry || context.activeInquiry.family?.key !== 'CAMP') return false;
     if (!context.activeInquiry.country?.code) return false;
-    if (!state || !state.candidate) return false;
+    if (!state || state.candidates.length === 0) return false;
     if (state.status === 'OFFERED' || state.status === 'SENT' || state.status === 'DECLINED') return false;
     if (nextField === 'country' || nextField === 'studentAge' || nextField === 'family') return false;
     return true;
@@ -1110,14 +1394,24 @@ export class ConciergeOrchestratorService {
 
   private async buildPromptDrivenCampBrochureOffer(params: {
     context: ConciergeTurnContext;
-    candidate: CampBrochureCandidate;
+    candidates: CampBrochureCandidate[];
   }): Promise<string> {
-    const fallback = `Tengo un folleto disponible para ${params.candidate.countryName ?? 'este país'}. ¿Quieres que te lo comparta ahora?`;
+    const countryName = params.candidates[0]?.countryName ?? 'este país';
+    const seasonLabels = this.getCampBrochureSeasonLabels(params.candidates);
+    const fallback =
+      seasonLabels.length > 1
+        ? `Tengo folletos disponibles para ${countryName} en estas temporadas: ${seasonLabels.join(', ')} 😊. ¿Cuál te gustaría que te comparta?`
+        : seasonLabels.length > 0
+        ? `Tengo un folleto disponible para ${countryName} en ${seasonLabels.join(', ')} 😊. ¿Quieres que te lo comparta ahora?`
+        : `Tengo folletos disponibles para ${countryName} 😊. ¿Quieres que te los comparta ahora?`;
     try {
       const instructions = [
         'Eres un concierge comercial de TKTours.',
-        'Redacta un mensaje breve, cálido y natural en español para ofrecer un folleto PDF.',
-        'Debe terminar con una pregunta de confirmación para enviarlo.',
+        'Redacta un mensaje breve, cálido y natural en español para ofrecer folletos PDF de campamentos.',
+        'Puedes usar como máximo 1 emoji natural si ayuda al tono.',
+        'Si hay temporadas disponibles, menciónalas de forma clara y natural usando verano, Semana Santa e invierno.',
+        'Si hay más de una temporada disponible, pide al usuario que elija cuál quiere recibir.',
+        'Si solo hay una temporada, termina con una pregunta de confirmación para enviarlo.',
         'No menciones procesos internos ni herramientas.',
         'No uses formato JSON.',
       ].join('\n');
@@ -1126,10 +1420,44 @@ export class ConciergeOrchestratorService {
         instructions,
         input: JSON.stringify({
           familyKey: params.context.activeInquiry?.family?.key ?? null,
-          countryName: params.candidate.countryName,
-          locationName: params.candidate.locationName,
-          brochureTitle: params.candidate.resourceTitle,
+          countryName,
+          availableSeasons: seasonLabels,
+          brochures: params.candidates.map((candidate) => ({
+            title: candidate.resourceTitle,
+            season: this.getPrimarySeasonKey(candidate.seasonKeys),
+            locationName: candidate.locationName,
+          })),
           latestUserMessage: params.context.latestMessage?.text ?? null,
+        }),
+      });
+
+      return (response.outputText ?? '').trim() || fallback;
+    } catch {
+      return fallback;
+    }
+  }
+
+  private async buildPromptDrivenCampBrochureSeasonChoice(params: {
+    context: ConciergeTurnContext;
+    candidates: CampBrochureCandidate[];
+  }): Promise<string> {
+    const seasonLabels = this.getCampBrochureSeasonLabels(params.candidates);
+    const fallback = `Con gusto 😊. Tengo disponible ${seasonLabels.join(', ')}. ¿Cuál prefieres que te comparta?`;
+    try {
+      const instructions = [
+        'Eres un concierge comercial de TKTours.',
+        'Redacta un mensaje breve, amable y natural en español.',
+        'Puedes usar como máximo 1 emoji natural si ayuda al tono.',
+        'Pide al usuario que elija una o varias temporadas entre verano, Semana Santa e invierno.',
+        'También puedes decir que, si lo prefiere, le puedes compartir todas las opciones disponibles.',
+        'No uses formato JSON.',
+      ].join('\n');
+
+      const response = await this.responsesClient.createTextResponse({
+        instructions,
+        input: JSON.stringify({
+          countryName: params.candidates[0]?.countryName ?? null,
+          availableSeasons: seasonLabels,
         }),
       });
 
@@ -1141,25 +1469,35 @@ export class ConciergeOrchestratorService {
 
   private async buildPromptDrivenCampBrochureSend(params: {
     context: ConciergeTurnContext;
-    candidate: CampBrochureCandidate;
+    candidates: CampBrochureCandidate[];
   }): Promise<string> {
-    const fallback = `Claro, te comparto el folleto PDF para que lo revises con calma.`;
+    const seasonLabels = this.getCampBrochureSeasonLabels(params.candidates);
+    const fallback =
+      seasonLabels.length > 0
+        ? `Claro 😊, te comparto los folletos disponibles de ${seasonLabels.join(', ')} para que los revises con calma.`
+        : `Claro 😊, te comparto los folletos disponibles para que los revises con calma.`;
     try {
       const instructions = [
         'Eres un concierge comercial de TKTours.',
-        'Redacta un mensaje breve y natural para confirmar el envío de un folleto PDF.',
+        'Redacta un mensaje breve y natural para confirmar el envío de uno o varios folletos PDF de campamentos.',
+        'Puedes usar como máximo 1 emoji natural si ayuda al tono.',
         'No incluyas enlaces, URLs, rutas internas ni nombres técnicos de archivo.',
-        'Menciona que el PDF se compartirá como archivo adjunto.',
+        'Menciona que los archivos se compartirán como adjuntos.',
+        'Si hay temporadas disponibles, menciónalas de forma natural usando verano, Semana Santa e invierno.',
         'No uses formato JSON.',
       ].join('\n');
 
       const response = await this.responsesClient.createTextResponse({
         instructions,
         input: JSON.stringify({
-          fileName: params.candidate.fileName,
-          brochureTitle: params.candidate.resourceTitle,
-          countryName: params.candidate.countryName,
-          locationName: params.candidate.locationName,
+          countryName: params.candidates[0]?.countryName ?? null,
+          availableSeasons: seasonLabels,
+          brochures: params.candidates.map((candidate) => ({
+            fileName: candidate.fileName,
+            brochureTitle: candidate.resourceTitle,
+            season: this.getPrimarySeasonKey(candidate.seasonKeys),
+            locationName: candidate.locationName,
+          })),
         }),
       });
 
@@ -1167,6 +1505,161 @@ export class ConciergeOrchestratorService {
       return candidate || fallback;
     } catch {
       return fallback;
+    }
+  }
+
+  private async findMatchingCircuitResourceCandidate(context: ConciergeTurnContext): Promise<CircuitResourceCandidate | null> {
+    const inquiry = context.activeInquiry;
+    const countryCode = inquiry?.country?.code ?? null;
+    const tripDays = this.getTripDaysFromInquiry(inquiry);
+    if (!inquiry || !this.isCircuitsInquiry(inquiry) || !countryCode || tripDays == null) {
+      return null;
+    }
+
+    const result = await this.toolExecutor.execute('list_available_resources', {
+      activeOnly: true,
+      familyKey: 'SCHOOL_PROGRAM',
+      countryCode,
+    });
+
+    const resources =
+      result && typeof result === 'object' && Array.isArray((result as { resources?: unknown }).resources)
+        ? ((result as { resources: Array<Record<string, unknown>> }).resources ?? [])
+        : [];
+
+    const candidates = resources
+      .map((resource) => this.toCircuitResourceCandidate(resource))
+      .filter((candidate): candidate is CircuitResourceCandidate => candidate !== null);
+
+    if (!candidates.length) {
+      return null;
+    }
+
+    if (candidates.length === 1) {
+      return candidates[0];
+    }
+
+    try {
+      const response = await this.responsesClient.createTextResponse({
+        instructions: [
+          'Eres un concierge comercial de TKTours.',
+          'Debes elegir si alguno de los itinerarios disponibles coincide claramente con la duración solicitada por el cliente.',
+          'Usa title, description y summary para decidir.',
+          'Solo elige un recurso si la coincidencia de duración es clara o razonablemente compatible.',
+          'Si no hay una coincidencia clara, responde null como selectedResourceId.',
+          'Devuelve JSON estricto con la forma {"selectedResourceId": string|null, "confidence": number}.',
+        ].join('\n'),
+        input: JSON.stringify({
+          destination: inquiry.country?.name ?? countryCode,
+          tripDays,
+          latestUserMessage: context.latestMessage?.text ?? null,
+          resources: candidates.map((candidate) => ({
+            resourceId: candidate.resourceId,
+            title: candidate.resourceTitle,
+            description: candidate.description,
+            summary: candidate.summary,
+            fileName: candidate.fileName,
+          })),
+        }),
+      });
+
+      const parsed = JSON.parse(response.outputText) as {
+        selectedResourceId?: unknown;
+        confidence?: unknown;
+      };
+      const selectedResourceId =
+        typeof parsed.selectedResourceId === 'string' && parsed.selectedResourceId.trim().length > 0
+          ? parsed.selectedResourceId.trim()
+          : null;
+      const confidence =
+        typeof parsed.confidence === 'number' && Number.isFinite(parsed.confidence) ? parsed.confidence : 0;
+
+      if (!selectedResourceId || confidence < 0.55) {
+        return null;
+      }
+
+      return candidates.find((candidate) => candidate.resourceId === selectedResourceId) ?? null;
+    } catch {
+      return null;
+    }
+  }
+
+  private toCircuitResourceCandidate(resource: Record<string, unknown>): CircuitResourceCandidate | null {
+    const base = this.toCampBrochureCandidate(resource);
+    if (!base) {
+      return null;
+    }
+
+    const currentVersion =
+      resource.currentVersion && typeof resource.currentVersion === 'object'
+        ? (resource.currentVersion as Record<string, unknown>)
+        : null;
+
+    return {
+      ...base,
+      description: this.asNonEmptyStringValue(resource.description),
+      summary: currentVersion ? this.asNonEmptyStringValue(currentVersion.summary) : null,
+    };
+  }
+
+  private async buildPromptDrivenCircuitResourceSend(params: {
+    context: ConciergeTurnContext;
+    candidate: CircuitResourceCandidate;
+  }): Promise<string> {
+    const fallback = 'Con gusto 😊, te comparto el itinerario en PDF para que lo revises con calma.';
+    try {
+      const response = await this.responsesClient.createTextResponse({
+        instructions: [
+          'Eres un concierge comercial de TKTours.',
+          'Redacta un mensaje breve, amable y natural en español para compartir un itinerario de viaje como archivo adjunto.',
+          'Puedes usar como máximo 1 emoji natural si ayuda al tono.',
+          'No incluyas enlaces, rutas internas ni nombres técnicos.',
+          'Puedes mencionar de forma breve que, si lo desea, un asesor puede ayudarle a revisar más opciones.',
+          'Responde solo texto plano.',
+        ].join('\n'),
+        input: JSON.stringify({
+          destination: params.context.activeInquiry?.country?.name ?? null,
+          tripDays: this.getTripDaysFromInquiry(params.context.activeInquiry),
+          resourceTitle: params.candidate.resourceTitle,
+          description: params.candidate.description,
+          summary: params.candidate.summary,
+        }),
+      });
+
+      const candidate = (response.outputText ?? '').trim();
+      return candidate || fallback;
+    } catch {
+      return fallback;
+    }
+  }
+
+  private async buildPromptDrivenCircuitNoMatch(params: {
+    context: ConciergeTurnContext;
+    fallbackReplyText: string;
+  }): Promise<string> {
+    try {
+      const response = await this.responsesClient.createTextResponse({
+        instructions: [
+          'Eres un concierge comercial de TKTours.',
+          'Redacta un mensaje breve, amable y natural en español.',
+          'Puedes usar como máximo 1 emoji natural si ayuda al tono.',
+          'Explica que por el momento no ves un itinerario que coincida claramente con el destino y la duración solicitados.',
+          'Indica que un asesor de TKTours dará seguimiento para proponer alternativas.',
+          'No pidas datos adicionales en este mensaje.',
+          'No inventes itinerarios.',
+          'Responde solo texto plano.',
+        ].join('\n'),
+        input: JSON.stringify({
+          destination: params.context.activeInquiry?.country?.name ?? null,
+          tripDays: this.getTripDaysFromInquiry(params.context.activeInquiry),
+          latestUserMessage: params.context.latestMessage?.text ?? null,
+        }),
+      });
+
+      const candidate = (response.outputText ?? '').trim();
+      return candidate || params.fallbackReplyText;
+    } catch {
+      return params.fallbackReplyText;
     }
   }
 
@@ -1181,19 +1674,29 @@ export class ConciergeOrchestratorService {
     };
   }
 
-  private async recordCampBrochureSend(inquiryId: string, candidate: CampBrochureCandidate): Promise<void> {
+  private async recordResourceSend(
+    inquiryId: string,
+    candidate: { resourceId: string; versionId: string },
+    sentReason: string,
+  ): Promise<void> {
     try {
       await prisma.inquiryResourceSend.create({
         data: {
           inquiryId,
           resourceId: candidate.resourceId,
           resourceVersionId: candidate.versionId,
-          sentReason: 'camp_brochure_confirmed_by_user',
+          sentReason,
         },
       });
     } catch {
       // Sending trace should not break concierge flow.
     }
+  }
+
+  private async recordCampBrochureSend(inquiryId: string, candidates: CampBrochureCandidate[]): Promise<void> {
+    await Promise.allSettled(
+      candidates.map((candidate) => this.recordResourceSend(inquiryId, candidate, 'camp_brochure_confirmed_by_user')),
+    );
   }
 
   private async hydrateInquiryFamilyFromIntent(
@@ -1208,17 +1711,20 @@ export class ConciergeOrchestratorService {
       | 'REQUEST_QUOTE'
       | 'ASK_LANGUAGE_COURSES'
       | 'ASK_CAMPS'
+      | 'ASK_CIRCUITS'
       | 'UNKNOWN',
   ): Promise<ConciergeTurnContext> {
     if (!context.activeInquiry || context.activeInquiry.family?.key) {
       return context;
     }
 
-    let familyKey: 'LANGUAGE_COURSE' | 'CAMP' | null = null;
+    let familyKey: 'LANGUAGE_COURSE' | 'CAMP' | 'SCHOOL_PROGRAM' | null = null;
     if (detectedIntent === 'MENU_OPTION_1' || detectedIntent === 'ASK_LANGUAGE_COURSES') {
       familyKey = 'LANGUAGE_COURSE';
     } else if (detectedIntent === 'MENU_OPTION_2' || detectedIntent === 'ASK_CAMPS') {
       familyKey = 'CAMP';
+    } else if (detectedIntent === 'MENU_OPTION_3' || detectedIntent === 'ASK_CIRCUITS' || detectedIntent === 'REQUEST_QUOTE') {
+      familyKey = 'SCHOOL_PROGRAM';
     }
 
     if (!familyKey) {
@@ -1228,6 +1734,9 @@ export class ConciergeOrchestratorService {
     await this.inquiryRepository.update({
       inquiryId: context.activeInquiry.id,
       familyKey,
+      qualificationJson: this.mergeQualificationJson(context.activeInquiry.qualificationJson, {
+        requestMode: familyKey === 'SCHOOL_PROGRAM' ? 'CIRCUITS' : undefined,
+      }),
     });
 
     const refreshedInquiry = await this.inquiryRepository.findById(context.activeInquiry.id);
@@ -1246,10 +1755,11 @@ export class ConciergeOrchestratorService {
     | 'MENU_OPTION_3'
     | 'ASK_AVAILABLE_COUNTRIES'
     | 'ASK_AVAILABLE_PROGRAMS'
-    | 'REQUEST_QUOTE'
-    | 'ASK_LANGUAGE_COURSES'
-    | 'ASK_CAMPS'
-    | 'UNKNOWN'
+      | 'REQUEST_QUOTE'
+      | 'ASK_LANGUAGE_COURSES'
+      | 'ASK_CAMPS'
+      | 'ASK_CIRCUITS'
+      | 'UNKNOWN'
   > {
     const latestMessage = context.latestMessage?.text ?? '';
     const recentMessages = (context.conversation?.messages ?? [])
@@ -1284,6 +1794,7 @@ export class ConciergeOrchestratorService {
         intent === 'REQUEST_QUOTE' ||
         intent === 'ASK_LANGUAGE_COURSES' ||
         intent === 'ASK_CAMPS' ||
+        intent === 'ASK_CIRCUITS' ||
         intent === 'UNKNOWN'
       ) {
         return intent;
@@ -1300,7 +1811,19 @@ export class ConciergeOrchestratorService {
     asksAccommodationOptions: boolean;
     isNegativeProgramAnswer: boolean;
     handoffStep: 'ask_name' | 'ask_email' | 'confirm_handoff' | 'none';
-    resolvedCountryCode: 'CA' | 'US' | 'GB' | 'IT' | 'FR' | 'IE' | null;
+    resolvedCountryCode:
+      | 'CA'
+      | 'US'
+      | 'GB'
+      | 'IT'
+      | 'FR'
+      | 'IE'
+      | 'MX'
+      | 'EUROPE'
+      | 'SOUTH_AMERICA'
+      | 'ASIA'
+      | 'OTHER_DESTINATIONS'
+      | null;
     confidence: number;
     needsClarification: boolean;
   }> {
@@ -1350,7 +1873,12 @@ export class ConciergeOrchestratorService {
         payload.resolvedCountryCode === 'GB' ||
         payload.resolvedCountryCode === 'IT' ||
         payload.resolvedCountryCode === 'FR' ||
-        payload.resolvedCountryCode === 'IE'
+        payload.resolvedCountryCode === 'IE' ||
+        payload.resolvedCountryCode === 'MX' ||
+        payload.resolvedCountryCode === 'EUROPE' ||
+        payload.resolvedCountryCode === 'SOUTH_AMERICA' ||
+        payload.resolvedCountryCode === 'ASIA' ||
+        payload.resolvedCountryCode === 'OTHER_DESTINATIONS'
           ? payload.resolvedCountryCode
           : null;
       const confidence =
@@ -1392,6 +1920,7 @@ export class ConciergeOrchestratorService {
       | 'REQUEST_QUOTE'
       | 'ASK_LANGUAGE_COURSES'
       | 'ASK_CAMPS'
+      | 'ASK_CIRCUITS'
       | 'UNKNOWN',
   ): { studentAge: number } | null {
     const studentAge = context.activeInquiry?.studentAge;
@@ -1420,6 +1949,7 @@ export class ConciergeOrchestratorService {
       | 'studentAge'
       | 'residenceCountry'
       | 'cityOfResidence'
+      | 'tripDays'
       | 'family'
       | 'program'
       | 'accommodation'
@@ -1446,6 +1976,7 @@ export class ConciergeOrchestratorService {
       case 'country':
       case 'residenceCountry':
       case 'cityOfResidence':
+      case 'tripDays':
         return 'QUALIFY_COUNTRY';
       case 'family':
       case 'program':
@@ -1471,6 +2002,7 @@ export class ConciergeOrchestratorService {
     | 'studentAge'
     | 'residenceCountry'
     | 'cityOfResidence'
+    | 'tripDays'
     | 'family'
     | 'accommodation'
     | 'preferredStartMonth'
@@ -1484,11 +2016,16 @@ export class ConciergeOrchestratorService {
     const weeksStatus = this.getWeeksStatusFromInquiry(inquiry);
     if (!inquiry.family?.key) return 'family';
 
+    if (this.isCircuitsInquiry(inquiry)) {
+      if (!inquiry.country?.code) return 'country';
+      if (this.getTripDaysFromInquiry(inquiry) == null) return 'tripDays';
+      return null;
+    }
+
     if (inquiry.family.key === 'CAMP') {
       if (inquiry.studentAge == null) return 'studentAge';
       if (!inquiry.country?.code) return 'country';
       if (!this.getResidenceCountryFromInquiry(inquiry)) return 'residenceCountry';
-      if (!inquiry.cityOfResidence) return 'cityOfResidence';
       if (preferredStartStatus !== 'UNDECIDED' && inquiry.preferredStartMonth == null) return 'preferredStartMonth';
       if (preferredStartStatus !== 'UNDECIDED' && inquiry.preferredStartYear == null) return 'preferredStartYear';
       if (!inquiry.accommodationType?.key) return 'accommodation';
@@ -1501,7 +2038,6 @@ export class ConciergeOrchestratorService {
     if (!inquiry.country?.code) return 'country';
     if (inquiry.studentAge == null) return 'studentAge';
     if (!this.getResidenceCountryFromInquiry(inquiry)) return 'residenceCountry';
-    if (!inquiry.cityOfResidence) return 'cityOfResidence';
     if (preferredStartStatus !== 'UNDECIDED' && inquiry.preferredStartMonth == null) return 'preferredStartMonth';
     if (preferredStartStatus !== 'UNDECIDED' && inquiry.preferredStartYear == null) return 'preferredStartYear';
     if (weeksStatus !== 'UNDECIDED' && inquiry.weeks == null) return 'weeks';
@@ -1517,6 +2053,7 @@ export class ConciergeOrchestratorService {
       | 'studentAge'
       | 'residenceCountry'
       | 'cityOfResidence'
+      | 'tripDays'
       | 'family'
       | 'program'
       | 'accommodation'
@@ -1527,11 +2064,12 @@ export class ConciergeOrchestratorService {
       | 'contactEmail'
     >,
     inquiry: ConciergeTurnContext['activeInquiry'],
-  ):
+  ): 
     | 'country'
     | 'studentAge'
     | 'residenceCountry'
     | 'cityOfResidence'
+    | 'tripDays'
     | 'family'
     | 'program'
     | 'accommodation'
@@ -1544,12 +2082,84 @@ export class ConciergeOrchestratorService {
     return fields.find((field) => this.isFieldStillMissing(field, inquiry)) ?? null;
   }
 
+  private sanitizeMissingFieldsForInquiry(
+    fields: Array<
+      | 'country'
+      | 'studentAge'
+      | 'residenceCountry'
+      | 'cityOfResidence'
+      | 'tripDays'
+      | 'family'
+      | 'program'
+      | 'accommodation'
+      | 'preferredStartMonth'
+      | 'preferredStartYear'
+      | 'weeks'
+      | 'contactName'
+      | 'contactEmail'
+    >,
+    inquiry: ConciergeTurnContext['activeInquiry'],
+  ): Array<
+    | 'country'
+    | 'studentAge'
+    | 'residenceCountry'
+    | 'cityOfResidence'
+    | 'tripDays'
+    | 'family'
+    | 'program'
+    | 'accommodation'
+    | 'preferredStartMonth'
+    | 'preferredStartYear'
+    | 'weeks'
+    | 'contactName'
+    | 'contactEmail'
+  > {
+    if (!inquiry) {
+      return fields;
+    }
+
+    if (this.isCircuitsInquiry(inquiry)) {
+      return fields.filter((field) => field === 'country' || field === 'tripDays');
+    }
+
+    if (inquiry.family?.key === 'CAMP') {
+      return fields.filter((field) =>
+        [
+          'studentAge',
+          'country',
+          'residenceCountry',
+          'preferredStartMonth',
+          'preferredStartYear',
+          'accommodation',
+          'weeks',
+          'contactName',
+          'contactEmail',
+        ].includes(field),
+      );
+    }
+
+    return fields.filter((field) =>
+      [
+        'country',
+        'studentAge',
+        'residenceCountry',
+        'preferredStartMonth',
+        'preferredStartYear',
+        'weeks',
+        'accommodation',
+        'contactName',
+        'contactEmail',
+      ].includes(field),
+    );
+  }
+
   private isFieldStillMissing(
     field:
       | 'country'
       | 'studentAge'
       | 'residenceCountry'
       | 'cityOfResidence'
+      | 'tripDays'
       | 'family'
       | 'program'
       | 'accommodation'
@@ -1571,6 +2181,8 @@ export class ConciergeOrchestratorService {
         return !this.getResidenceCountryFromInquiry(inquiry);
       case 'cityOfResidence':
         return !inquiry.cityOfResidence;
+      case 'tripDays':
+        return this.getTripDaysFromInquiry(inquiry) == null;
       case 'family':
         return !inquiry.family?.key;
       case 'program':
@@ -1620,10 +2232,10 @@ export class ConciergeOrchestratorService {
   private isReadyForAdvisorHandoff(context: ConciergeTurnContext): boolean {
     const inquiry = context.activeInquiry;
     if (!inquiry?.family?.key) return false;
+    if (this.isCircuitsInquiry(inquiry)) return false;
     if (!inquiry.country?.code) return false;
     if (inquiry.studentAge == null) return false;
     if (!this.getResidenceCountryFromInquiry(inquiry)) return false;
-    if (!inquiry.cityOfResidence) return false;
     if (!inquiry.accommodationType?.key) return false;
     return true;
   }
@@ -1652,6 +2264,37 @@ export class ConciergeOrchestratorService {
     return Boolean(lastName || (firstName && firstName.includes(' ')));
   }
 
+  private isCircuitsInquiry(inquiry: ConciergeTurnContext['activeInquiry']): boolean {
+    if (!inquiry || inquiry.family?.key !== 'SCHOOL_PROGRAM') {
+      return false;
+    }
+    const qualification = inquiry.qualificationJson;
+    return Boolean(
+      qualification &&
+        typeof qualification === 'object' &&
+        (qualification as Record<string, unknown>).requestMode === 'CIRCUITS',
+    );
+  }
+
+  private getTripDaysFromInquiry(inquiry: ConciergeTurnContext['activeInquiry']): number | null {
+    const qualification = inquiry?.qualificationJson;
+    if (!qualification || typeof qualification !== 'object') {
+      return null;
+    }
+    const tripDays = (qualification as Record<string, unknown>).tripDays;
+    return typeof tripDays === 'number' && Number.isFinite(tripDays) && tripDays > 0 ? Math.floor(tripDays) : null;
+  }
+
+  private mergeQualificationJson(
+    current: Record<string, unknown> | null | undefined,
+    patch: Record<string, unknown>,
+  ): Record<string, unknown> {
+    return {
+      ...(current ?? {}),
+      ...Object.fromEntries(Object.entries(patch).filter(([, value]) => value !== undefined)),
+    };
+  }
+
   private async withCatalogOptionsForFollowUp(params: {
     replyText: string;
     nextField:
@@ -1659,6 +2302,7 @@ export class ConciergeOrchestratorService {
       | 'studentAge'
       | 'residenceCountry'
       | 'cityOfResidence'
+      | 'tripDays'
       | 'family'
       | 'program'
       | 'accommodation'
@@ -1670,7 +2314,7 @@ export class ConciergeOrchestratorService {
     context: ConciergeTurnContext;
   }): Promise<string> {
     if (params.nextField === 'country') {
-      const options = await this.buildCountryOptionsList();
+      const options = await this.buildCountryOptionsList(params.context);
       if (!options) return params.replyText;
       const cleaned = this.stripCatalogOptionsBlocks(params.replyText, ['Opciones disponibles:']);
       return `${cleaned}\n${options}`;
@@ -1686,6 +2330,13 @@ export class ConciergeOrchestratorService {
       return `${cleaned}\n${options}`;
     }
 
+    if (params.nextField === 'weeks') {
+      const options = await this.buildWeeksOptionsList(params.context);
+      if (!options) return params.replyText;
+      const cleaned = this.stripCatalogOptionsBlocks(params.replyText, ['Opciones de duración disponibles:', 'Opciones disponibles:']);
+      return `${cleaned}\n${options}`;
+    }
+
     return params.replyText;
   }
 
@@ -1695,6 +2346,7 @@ export class ConciergeOrchestratorService {
       | 'studentAge'
       | 'residenceCountry'
       | 'cityOfResidence'
+      | 'tripDays'
       | 'family'
       | 'program'
       | 'accommodation'
@@ -1708,9 +2360,11 @@ export class ConciergeOrchestratorService {
   }): Promise<string> {
     const optionsText =
       params.nextField === 'country'
-        ? await this.buildCountryOptionsList()
+        ? await this.buildCountryOptionsList(params.context)
         : params.nextField === 'accommodation'
           ? await this.buildAccommodationOptionsList(params.context)
+          : params.nextField === 'weeks'
+            ? await this.buildWeeksOptionsList(params.context)
           : params.nextField === 'family' || params.nextField === 'program'
             ? await this.buildProgramFamilyOptionsList(params.context)
             : null;
@@ -1718,29 +2372,31 @@ export class ConciergeOrchestratorService {
     try {
       const instructions = [
         'Eres un concierge comercial para TKTours.',
-        'Escribe una sola pregunta en español, cálida y natural (1-2 frases).',
+        'Escribe una sola pregunta en español, cálida, amable y natural (1-2 frases).',
+        'Puedes usar como máximo 1 emoji natural si ayuda a que suene más cercano.',
         'Debes pedir exactamente el campo expectedField y no mezclar otros campos.',
         'Si el usuario dio un dato útil pero aún falta expectedField, reconócelo brevemente antes de preguntar el dato faltante.',
+        'Si requestMode es CIRCUITS y expectedField es country, pide el destino o región de viaje, no lo formules como país académico o país de estudio.',
         'Si expectedField es residenceCountry y cityOfResidence ya existe, reconoce la ciudad y pide el país de residencia.',
-        'Si expectedField es cityOfResidence y residenceCountry ya existe, reconoce el país y pide la ciudad.',
+        'Nunca pidas cityOfResidence; si existe, solo úsala como contexto para sonar más natural.',
         'No hagas listas ni bullets en la pregunta.',
-        'No uses tono robótico.',
+        'Evita sonar seca, tajante, robótica o demasiado directa.',
         'Si optionsText existe, NO lo repitas ni lo reformules; se agregará fuera de tu texto.',
         'Responde solo texto plano.',
         'Ejemplos de estilo (no copiar literal):',
-        '- country: "¡Excelente! Para continuar, ¿qué país tienes en mente?"',
-        '- studentAge: "¡Perfecto! ¿Qué edad tiene la persona que viajaría?"',
-        '- residenceCountry: "Gracias. ¿En qué país vive actualmente el estudiante?"',
-        '- residenceCountry con ciudad conocida: "Gracias, ya tengo Monterrey como ciudad. ¿Me confirmas en qué país vive actualmente?"',
-        '- cityOfResidence: "¿Y en qué ciudad reside actualmente?"',
-        '- cityOfResidence con país conocido: "Perfecto, ya tengo México como país de residencia. ¿En qué ciudad vive actualmente?"',
-        '- family/program: "Buenísimo, ¿qué tipo de programa te interesa?"',
-        '- preferredStartMonth: "¿En qué mes les gustaría iniciar?"',
-        '- preferredStartYear: "¿En qué año te gustaría comenzar?"',
-        '- weeks: "¿Cuántas semanas te gustaría estudiar?"',
-        '- accommodation: "Para cerrar esta parte, ¿qué tipo de alojamiento prefieren?"',
-        '- contactName: "Con eso ya puedo dejarlo encaminado. ¿Me compartes tu nombre completo?"',
-        '- contactEmail: "Gracias. ¿Cuál es tu correo electrónico para que un asesor pueda dar seguimiento?"',
+        '- country: "Con gusto 😊, para orientarte mejor, ¿qué país tienes en mente?"',
+        '- country con requestMode=CIRCUITS: "Con gusto ✨, para orientarte mejor, ¿qué tipo de destino te interesa?"',
+        '- studentAge: "Perfecto 😊, para ubicar mejor la opción, ¿qué edad tiene la persona que viajaría?"',
+        '- residenceCountry: "Si te parece, ¿me confirmas en qué país vive actualmente el estudiante?"',
+        '- residenceCountry con ciudad conocida: "Gracias 😊, ya tengo Monterrey como referencia. ¿Me confirmas en qué país vive actualmente?"',
+        '- tripDays: "Perfecto ✨, para buscar una opción que se ajuste mejor, ¿cuántos días deseas tu viaje?"',
+        '- family/program: "Con gusto, ¿qué tipo de programa te interesa?"',
+        '- preferredStartMonth: "Para orientarte mejor, ¿en qué mes les gustaría iniciar?"',
+        '- preferredStartYear: "Perfecto, ¿en qué año te gustaría comenzar?"',
+        '- weeks: "Para buscar una opción adecuada, ¿cuántas semanas te interesaría que dure el programa? 😊"',
+        '- accommodation: "Para afinar esta parte, ¿qué tipo de alojamiento prefieren?"',
+        '- contactName: "Con eso ya puedo dejarlo encaminado ✨. ¿Me compartes tu nombre completo, por favor?"',
+        '- contactEmail: "Gracias 😊. ¿Cuál es tu correo electrónico para que un asesor de TKTours pueda dar seguimiento?"',
       ].join('\n');
 
       const response = await this.responsesClient.createTextResponse({
@@ -1753,6 +2409,8 @@ export class ConciergeOrchestratorService {
           studentAge: params.context.activeInquiry?.studentAge ?? null,
           residenceCountry: this.getResidenceCountryFromInquiry(params.context.activeInquiry),
           cityOfResidence: params.context.activeInquiry?.cityOfResidence ?? null,
+          tripDays: this.getTripDaysFromInquiry(params.context.activeInquiry),
+          requestMode: this.isCircuitsInquiry(params.context.activeInquiry) ? 'CIRCUITS' : null,
           latestUserMessage: params.context.latestMessage?.text ?? null,
         }),
       });
@@ -1788,7 +2446,7 @@ export class ConciergeOrchestratorService {
       const contact = params.context.activeInquiry?.contact ?? params.context.conversation?.contact ?? null;
       const instructions = [
         'Eres un concierge comercial para TKTours.',
-        'Escribe un cierre breve, cálido y natural en español.',
+        'Escribe un cierre breve, cálido, amable y natural en español.',
         'El cliente ya tiene datos de contacto guardados; NO pidas nombre ni correo.',
         'Confirma que la información quedó lista y que un asesor dará seguimiento más adelante.',
         'No prometas precios, disponibilidad ni tiempos exactos.',
@@ -1841,7 +2499,7 @@ export class ConciergeOrchestratorService {
     for (const key of unique) {
       if (key === 'LANGUAGE_COURSE') labels.push('Cursos de idiomas');
       if (key === 'CAMP') labels.push('Campamentos / viajes');
-      if (key === 'SCHOOL_PROGRAM') labels.push('Programas escolares');
+      if (key === 'SCHOOL_PROGRAM') labels.push('Circuitos por el mundo');
     }
 
     if (!labels.length) {
@@ -1851,7 +2509,12 @@ export class ConciergeOrchestratorService {
     return `Opciones disponibles:\n${labels.map((label, index) => `${index + 1}) ${label}`).join('\n')}`;
   }
 
-  private async buildCountryOptionsList(): Promise<string | null> {
+  private async buildCountryOptionsList(context?: ConciergeTurnContext): Promise<string | null> {
+    if (this.isCircuitsInquiry(context?.activeInquiry ?? null)) {
+      const circuitOptions = ['México', 'Europa', 'Sudamérica', 'Países Asiáticos', 'Otros destinos'];
+      return `Opciones disponibles:\n${circuitOptions.map((item, index) => `${index + 1}) ${item}`).join('\n')}`;
+    }
+
     const countriesResult = await this.toolExecutor.execute('list_available_countries', {
       activeOnly: true,
     });
@@ -1869,7 +2532,10 @@ export class ConciergeOrchestratorService {
       return null;
     }
 
-    const options = countries.map((country, index) => `${index + 1}) ${country}`).join('\n');
+    const filteredCountries = countries.filter((country) =>
+      !['Europa', 'Sudamérica', 'Países Asiáticos', 'Otros destinos'].includes(country),
+    );
+    const options = filteredCountries.map((country, index) => `${index + 1}) ${country}`).join('\n');
     return `Opciones disponibles:\n${options}`;
   }
 
@@ -1906,6 +2572,33 @@ export class ConciergeOrchestratorService {
       .join('\n');
 
     return `Opciones de alojamiento disponibles:\n${options}`;
+  }
+
+  private async buildWeeksOptionsList(context: ConciergeTurnContext): Promise<string | null> {
+    const weeksResult = await this.toolExecutor.execute('list_weeks_options', {
+      countryCode: context.activeInquiry?.country?.code ?? undefined,
+      familyKey: context.activeInquiry?.family?.key ?? undefined,
+      programSlug: context.activeInquiry?.program?.slug ?? undefined,
+    });
+
+    const options =
+      weeksResult &&
+      typeof weeksResult === 'object' &&
+      Array.isArray((weeksResult as { options?: unknown }).options)
+        ? ((weeksResult as { options: unknown[] }).options ?? [])
+            .filter((value): value is number => typeof value === 'number' && Number.isFinite(value) && value > 0)
+            .sort((a, b) => a - b)
+        : [];
+
+    if (!options.length) {
+      return null;
+    }
+
+    const rendered = options
+      .map((weeks) => `${weeks} ${weeks === 1 ? 'semana' : 'semanas'}`)
+      .join('\n');
+
+    return `Opciones de duración disponibles:\n${rendered}`;
   }
 
   private toAccommodationLabel(key: string, fallbackName: string | null): string {
@@ -2003,6 +2696,7 @@ export class ConciergeOrchestratorService {
     activeInquiryId: string | null;
     replyText: string;
     mediaUrl: string | null;
+    mediaUrls: string[] | null;
     nextStage: string | null;
     shouldRefreshRecommendations: boolean;
     responseId: string;
@@ -2016,6 +2710,7 @@ export class ConciergeOrchestratorService {
       mediaUrl: params.mediaUrl,
       metadata: {
         source: 'concierge-orchestrator',
+        mediaUrls: params.mediaUrls ?? [],
       },
     });
 
@@ -2049,6 +2744,13 @@ export class ConciergeOrchestratorService {
         : {}),
       contextJson: nextContextJson,
     });
+
+    if (params.activeInquiryId && params.nextStage === 'CLOSED') {
+      await this.inquiryRepository.updateStatus({
+        inquiryId: params.activeInquiryId,
+        status: 'CLOSED',
+      });
+    }
 
     if (params.activeInquiryId && params.shouldRefreshRecommendations) {
       await this.refreshInquiryRecommendationsUseCase.execute(params.activeInquiryId);

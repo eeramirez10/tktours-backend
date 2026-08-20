@@ -67,9 +67,17 @@ export type ConversationInquirySummary = {
   id: string;
   status: string;
   studentAge: number | null;
+  residenceCountry: string | null;
+  cityOfResidence: string | null;
   countryName: string | null;
   familyName: string | null;
+  locationName: string | null;
   programName: string | null;
+  accommodationName: string | null;
+  preferredStartMonth: number | null;
+  preferredStartYear: number | null;
+  weeks: number | null;
+  notes: string | null;
   createdAt: Date;
 };
 

@@ -6,6 +6,7 @@ import { logger } from '../../../../shared/config/logger.js';
 import { ValidationAppError } from '../../../../shared/domain/errors/app-error.js';
 import { prisma } from '../../../../shared/infrastructure/database/prisma.js';
 import type { TwilioWhatsAppWebhookBody } from '../../presentation/http/schemas/twilio-whatsapp-webhook.schemas.js';
+import { WhatsappConversationThreadService } from './whatsapp-conversation-thread.service.js';
 
 function toNullableJsonInput(value: Record<string, unknown> | null): Prisma.InputJsonValue | typeof Prisma.JsonNull {
   return value == null ? Prisma.JsonNull : (value as Prisma.InputJsonValue);
@@ -27,7 +28,10 @@ function normalizeWaId(payload: TwilioWhatsAppWebhookBody): string {
 }
 
 export class TwilioWhatsAppInboundService {
-  constructor(private readonly concierge = new ConciergeOrchestratorService()) {}
+  constructor(
+    private readonly concierge = new ConciergeOrchestratorService(),
+    private readonly threadService = new WhatsappConversationThreadService(),
+  ) {}
 
   async processInbound(payload: TwilioWhatsAppWebhookBody): Promise<void> {
     const from = withWhatsAppPrefix(payload.From.trim());
@@ -47,7 +51,7 @@ export class TwilioWhatsAppInboundService {
       select: { id: true },
     });
 
-    const conversation = await this.findOrCreateOpenConversation(contact.id);
+    const conversation = await this.threadService.getOrCreateThread(contact.id);
 
     const inboundMessage = await this.createInboundMessage({
       conversationId: conversation.id,
@@ -90,17 +94,35 @@ export class TwilioWhatsAppInboundService {
       body: replyText,
     });
 
-    const mediaUrl = outboundMessage?.mediaUrl ?? null;
-    const mediaResult =
-      mediaUrl && /^https?:\/\//i.test(mediaUrl)
-        ? await this.sendWhatsAppMessage({
-            to: from,
-            mediaUrl,
-          }).catch((error) => {
-            logger.error({ error, mediaUrl, messageId: outboundMessage?.id }, 'twilio media outbound request failed');
-            return { sid: null, status: 'FAILED_TO_REQUEST' };
-          })
-        : null;
+    const metadata = outboundMessage?.metadata ?? null;
+    const metadataMediaUrls =
+      metadata &&
+      typeof metadata === 'object' &&
+      Array.isArray((metadata as Record<string, unknown>).mediaUrls)
+        ? ((metadata as Record<string, unknown>).mediaUrls as unknown[])
+            .filter((item): item is string => typeof item === 'string' && /^https?:\/\//i.test(item))
+        : [];
+    const mediaUrls = metadataMediaUrls.length > 0
+      ? metadataMediaUrls
+      : outboundMessage?.mediaUrl && /^https?:\/\//i.test(outboundMessage.mediaUrl)
+        ? [outboundMessage.mediaUrl]
+        : [];
+
+    const mediaResults: Array<{ url: string; sid: string | null; status: string | null }> = [];
+    for (const mediaUrl of mediaUrls) {
+      const mediaResult = await this.sendWhatsAppMessage({
+        to: from,
+        mediaUrl,
+      }).catch((error) => {
+        logger.error({ error, mediaUrl, messageId: outboundMessage?.id }, 'twilio media outbound request failed');
+        return { sid: null, status: 'FAILED_TO_REQUEST' };
+      });
+      mediaResults.push({
+        url: mediaUrl,
+        sid: mediaResult.sid,
+        status: mediaResult.status,
+      });
+    }
 
     if (!outboundMessage || !textResult.sid) {
       return;
@@ -115,8 +137,11 @@ export class TwilioWhatsAppInboundService {
             ...(outboundMessage.metadata ?? {}),
             transport: 'twilio',
             twilioStatus: textResult.status,
-            mediaTwilioSid: mediaResult?.sid ?? null,
-            mediaTwilioStatus: mediaResult?.status ?? null,
+            mediaTwilioSid: mediaResults[0]?.sid ?? null,
+            mediaTwilioStatus: mediaResults[0]?.status ?? null,
+            mediaTwilioSids: mediaResults.map((item) => item.sid),
+            mediaTwilioStatuses: mediaResults.map((item) => item.status),
+            mediaUrls,
           }),
         },
       });
@@ -124,36 +149,6 @@ export class TwilioWhatsAppInboundService {
       logger.warn({ error, messageId: outboundMessage.id }, 'failed to persist twilio sid in outbound message');
     }
   }
-
-  private async findOrCreateOpenConversation(contactId: string): Promise<{ id: string }> {
-    const existing = await prisma.conversation.findFirst({
-      where: {
-        contactId,
-        channel: 'WHATSAPP',
-        status: 'OPEN',
-      },
-      orderBy: [{ lastMessageAt: 'desc' }, { updatedAt: 'desc' }],
-      select: { id: true },
-    });
-
-    if (existing) {
-      return existing;
-    }
-
-    return prisma.conversation.create({
-      data: {
-        contactId,
-        channel: 'WHATSAPP',
-        status: 'OPEN',
-        currentStage: 'START',
-        contextJson: {
-          source: 'twilio-webhook',
-        },
-      },
-      select: { id: true },
-    });
-  }
-
   private async ensureOpenInquiry(conversationId: string, contactId: string): Promise<void> {
     const openInquiry = await prisma.inquiry.findFirst({
       where: {

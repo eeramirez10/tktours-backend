@@ -10,6 +10,7 @@ export type ConciergeMissingField =
   | 'studentAge'
   | 'residenceCountry'
   | 'cityOfResidence'
+  | 'tripDays'
   | 'family'
   | 'program'
   | 'accommodation'

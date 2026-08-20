@@ -18,3 +18,13 @@ export const twilioWhatsAppWebhookBodySchema = z.object({
 });
 
 export type TwilioWhatsAppWebhookBody = z.infer<typeof twilioWhatsAppWebhookBodySchema>;
+
+export const twilioWhatsAppStatusBodySchema = z.object({
+  MessageSid: z.string().trim().min(1),
+  MessageStatus: optionalTrimmedString,
+  SmsStatus: optionalTrimmedString,
+  ErrorCode: optionalTrimmedString,
+  ErrorMessage: optionalTrimmedString,
+});
+
+export type TwilioWhatsAppStatusBody = z.infer<typeof twilioWhatsAppStatusBodySchema>;

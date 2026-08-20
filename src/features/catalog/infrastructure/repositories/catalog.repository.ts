@@ -1,5 +1,6 @@
-import type { Prisma } from '@prisma/client';
+import { Prisma } from '@prisma/client';
 
+import { ConflictAppError, NotFoundAppError } from '../../../../shared/domain/errors/app-error.js';
 import { prisma } from '../../../../shared/infrastructure/database/prisma.js';
 import type { CatalogReadRepository } from '../../domain/repositories/catalog-read.repository.js';
 import type {
@@ -12,8 +13,12 @@ import type {
   CatalogProgramRecommendation,
   CatalogProgramRecommendationQuery,
   CatalogResourceSummary,
+  CreateCatalogCountryInput,
+  CreateCatalogLocationInput,
   ListCatalogLocationsQuery,
   ListCatalogProgramsQuery,
+  UpdateCatalogCountryInput,
+  UpdateCatalogLocationInput,
 } from '../../domain/types/catalog.types.js';
 
 const programSelect = {
@@ -63,6 +68,7 @@ const programSelect = {
       quoteMode: true,
       minWeeks: true,
       maxWeeks: true,
+      weekOptions: true,
       allowsMiniStay: true,
       miniStayGroupOnly: true,
       notes: true,
@@ -159,6 +165,7 @@ function mapProgram(program: ProgramRecord): CatalogProgramDetail {
     quoteMode: program.rule?.quoteMode ?? null,
     minWeeks: program.rule?.minWeeks ?? null,
     maxWeeks: program.rule?.maxWeeks ?? null,
+    weekOptions: program.rule?.weekOptions ?? [],
     allowsMiniStay: program.rule?.allowsMiniStay ?? false,
     miniStayGroupOnly: program.rule?.miniStayGroupOnly ?? false,
     ruleNotes: program.rule?.notes ?? null,
@@ -212,6 +219,50 @@ export class CatalogRepository implements CatalogReadRepository {
     });
   }
 
+  async createCountry(input: CreateCatalogCountryInput): Promise<CatalogCountry> {
+    try {
+      const created = await prisma.country.create({
+        data: {
+          code: input.code.trim().toUpperCase(),
+          name: input.name.trim(),
+          active: input.active,
+        },
+        select: { id: true, code: true, name: true, active: true },
+      });
+
+      return created;
+    } catch (error) {
+      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
+        throw new ConflictAppError('Country code already exists');
+      }
+      throw error;
+    }
+  }
+
+  async updateCountry(input: UpdateCatalogCountryInput): Promise<CatalogCountry> {
+    try {
+      const updated = await prisma.country.update({
+        where: { id: input.countryId },
+        data: {
+          ...(input.code !== undefined ? { code: input.code.trim().toUpperCase() } : {}),
+          ...(input.name !== undefined ? { name: input.name.trim() } : {}),
+          ...(input.active !== undefined ? { active: input.active } : {}),
+        },
+        select: { id: true, code: true, name: true, active: true },
+      });
+
+      return updated;
+    } catch (error) {
+      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2025') {
+        throw new NotFoundAppError('Country not found');
+      }
+      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
+        throw new ConflictAppError('Country code already exists');
+      }
+      throw error;
+    }
+  }
+
   async findLocations(query: ListCatalogLocationsQuery): Promise<CatalogProgramLocation[]> {
     return prisma.programLocation.findMany({
       where: {
@@ -247,6 +298,114 @@ export class CatalogRepository implements CatalogReadRepository {
         },
       },
     });
+  }
+
+  async createLocation(input: CreateCatalogLocationInput): Promise<CatalogProgramLocation> {
+    const country = await prisma.country.findUnique({
+      where: { code: input.countryCode.trim().toUpperCase() },
+      select: { id: true },
+    });
+
+    if (!country) {
+      throw new NotFoundAppError(`Country not found for code ${input.countryCode}`);
+    }
+
+    try {
+      const created = await prisma.programLocation.create({
+        data: {
+          countryId: country.id,
+          name: input.name.trim(),
+          slug: this.slugify(input.name),
+          venueName: input.venueName?.trim() || null,
+          description: input.description?.trim() || null,
+          active: input.active,
+        },
+        select: {
+          id: true,
+          slug: true,
+          name: true,
+          venueName: true,
+          description: true,
+          active: true,
+          country: {
+            select: { id: true, code: true, name: true, active: true },
+          },
+        },
+      });
+
+      return created;
+    } catch (error) {
+      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
+        throw new ConflictAppError('Location slug already exists for that country');
+      }
+      throw error;
+    }
+  }
+
+  async updateLocation(input: UpdateCatalogLocationInput): Promise<CatalogProgramLocation> {
+    const current = await prisma.programLocation.findUnique({
+      where: { id: input.locationId },
+      select: {
+        id: true,
+        name: true,
+        country: {
+          select: { code: true },
+        },
+      },
+    });
+
+    if (!current) {
+      throw new NotFoundAppError('Location not found');
+    }
+
+    let nextCountryId: string | undefined;
+    if (input.countryCode !== undefined) {
+      const country = await prisma.country.findUnique({
+        where: { code: input.countryCode.trim().toUpperCase() },
+        select: { id: true },
+      });
+
+      if (!country) {
+        throw new NotFoundAppError(`Country not found for code ${input.countryCode}`);
+      }
+
+      nextCountryId = country.id;
+    }
+
+    const nextName = input.name?.trim() ?? current.name;
+    try {
+      const updated = await prisma.programLocation.update({
+        where: { id: input.locationId },
+        data: {
+          ...(nextCountryId ? { countryId: nextCountryId } : {}),
+          ...(input.name !== undefined ? { name: nextName, slug: this.slugify(nextName) } : {}),
+          ...(input.venueName !== undefined ? { venueName: input.venueName?.trim() || null } : {}),
+          ...(input.description !== undefined ? { description: input.description?.trim() || null } : {}),
+          ...(input.active !== undefined ? { active: input.active } : {}),
+        },
+        select: {
+          id: true,
+          slug: true,
+          name: true,
+          venueName: true,
+          description: true,
+          active: true,
+          country: {
+            select: { id: true, code: true, name: true, active: true },
+          },
+        },
+      });
+
+      return updated;
+    } catch (error) {
+      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2025') {
+        throw new NotFoundAppError('Location not found');
+      }
+      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
+        throw new ConflictAppError('Location slug already exists for that country');
+      }
+      throw error;
+    }
   }
 
   async findPrograms(query: ListCatalogProgramsQuery): Promise<CatalogProgram[]> {
@@ -384,5 +543,15 @@ export class CatalogRepository implements CatalogReadRepository {
       ...program,
       matchReasons: reasons,
     };
+  }
+
+  private slugify(value: string): string {
+    return value
+      .trim()
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-+|-+$/g, '');
   }
 }

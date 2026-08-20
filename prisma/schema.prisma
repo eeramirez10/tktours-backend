@@ -207,6 +207,7 @@ model ProgramRule {
   quoteMode         QuoteMode
   minWeeks          Int?
   maxWeeks          Int?
+  weekOptions       Int[]     @default([])
   allowsMiniStay    Boolean   @default(false)
   miniStayGroupOnly Boolean   @default(false)
   notes             String?

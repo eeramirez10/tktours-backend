@@ -37,6 +37,7 @@ export type ResourceBaseInput = {
   month: number | null;
   year: number | null;
   active: boolean;
+  weekOptions?: number[];
 };
 
 export type CreateResourceInput = ResourceBaseInput & {
@@ -56,6 +57,7 @@ export type UpdateResourceInput = {
   month?: number | null;
   year?: number | null;
   active?: boolean;
+  weekOptions?: number[];
   updatedById?: string | null;
 };
 
@@ -106,6 +108,7 @@ export type ResourceProgram = {
   id: string;
   slug: string;
   name: string;
+  weekOptions: number[];
 };
 
 export type ResourceLocation = {
@@ -149,6 +152,7 @@ export type ResourceListItem = {
   month: number | null;
   year: number | null;
   active: boolean;
+  weekOptions: number[];
   country: ResourceCountry;
   family: ResourceFamily | null;
   program: ResourceProgram | null;
@@ -171,4 +175,33 @@ export type ResourceDownload = {
   sourceType: ResourceSourceType;
   externalUrl: string | null;
   storageKey: string | null;
+};
+
+export type ResourceAuditIssueSeverity = 'error' | 'warning';
+
+export type ResourceAuditIssue = {
+  code:
+    | 'CAMP_BROCHURE_MISSING_PROGRAM'
+    | 'CAMP_BROCHURE_MISSING_SEASON'
+    | 'CAMP_BROCHURE_DUPLICATE_SEASON'
+    | 'RESOURCE_MISSING_CURRENT_VERSION'
+    | 'RESOURCE_PENDING_EXTRACTION';
+  severity: ResourceAuditIssueSeverity;
+  message: string;
+  resourceId?: string;
+  resourceTitle?: string;
+  countryCode?: string;
+  countryName?: string;
+  seasonKey?: string | null;
+  relatedResourceIds?: string[];
+};
+
+export type ResourceAuditReport = {
+  generatedAt: string;
+  summary: {
+    resourcesChecked: number;
+    errors: number;
+    warnings: number;
+  };
+  issues: ResourceAuditIssue[];
 };

@@ -54,6 +54,38 @@ const optionalIntStringSchema = z.preprocess((value) => {
   return value;
 }, z.number().int().optional());
 
+const optionalWeekOptionsSchema = z.preprocess((value) => {
+  if (value === undefined || value === null || value === '') {
+    return undefined;
+  }
+
+  if (Array.isArray(value)) {
+    return value;
+  }
+
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    if (trimmed === '') {
+      return undefined;
+    }
+
+    try {
+      const parsed = JSON.parse(trimmed);
+      if (Array.isArray(parsed)) {
+        return parsed;
+      }
+    } catch {
+      return trimmed
+        .split(',')
+        .map((item) => Number(item.trim()))
+        .filter((item) => Number.isFinite(item));
+    }
+  }
+
+  return value;
+}, z.array(z.number().int().min(1).max(104)).max(52).optional())
+  .transform((value) => (value ? Array.from(new Set(value)).sort((a, b) => a - b) : undefined));
+
 export const uploadResourceBodySchema = z
   .object({
     countryCode: z.string().trim().min(2).max(3),
@@ -69,6 +101,7 @@ export const uploadResourceBodySchema = z
     month: optionalIntStringSchema.pipe(z.number().int().min(1).max(12).optional()),
     year: optionalIntStringSchema.pipe(z.number().int().min(2000).max(2100).optional()),
     active: optionalBooleanStringSchema,
+    weekOptions: optionalWeekOptionsSchema,
     createdById: optionalNullableTrimmedStringSchema,
     storageProvider: z.enum(STORAGE_PROVIDERS).optional(),
     extractText: optionalBooleanStringSchema,
@@ -96,7 +129,20 @@ export const uploadResourceBodySchema = z
     month: value.month ?? null,
     year: value.year ?? null,
     active: value.active ?? true,
+    weekOptions: value.weekOptions,
     createdById: value.createdById ?? null,
+    storageProvider: value.storageProvider ?? 'SUPABASE',
+    extractText: value.extractText ?? true,
+  }));
+
+export const uploadResourceVersionBodySchema = z
+  .object({
+    uploadedById: optionalNullableTrimmedStringSchema,
+    storageProvider: z.enum(STORAGE_PROVIDERS).optional(),
+    extractText: optionalBooleanStringSchema,
+  })
+  .transform((value) => ({
+    uploadedById: value.uploadedById ?? null,
     storageProvider: value.storageProvider ?? 'SUPABASE',
     extractText: value.extractText ?? true,
   }));

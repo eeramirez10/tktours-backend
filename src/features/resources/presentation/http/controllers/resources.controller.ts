@@ -7,6 +7,7 @@ import { NotFoundAppError, ValidationAppError } from '../../../../../shared/doma
 import { ResourceExtractionService } from '../../../application/services/resource-extraction.service.js';
 import { CreateResourceUseCase } from '../../../application/use-cases/create-resource.use-case.js';
 import { CreateResourceVersionUseCase } from '../../../application/use-cases/create-resource-version.use-case.js';
+import { AuditResourcesUseCase } from '../../../application/use-cases/audit-resources.use-case.js';
 import { DeleteResourceUseCase } from '../../../application/use-cases/delete-resource.use-case.js';
 import { GetResourceByIdUseCase } from '../../../application/use-cases/get-resource-by-id.use-case.js';
 import { GetResourceDownloadUseCase } from '../../../application/use-cases/get-resource-download.use-case.js';
@@ -21,7 +22,7 @@ import { createResourceVersionBodySchema } from '../schemas/create-resource-vers
 import { resourceDownloadParamsSchema, resourceIdParamsSchema } from '../schemas/resource-params.schemas.js';
 import { listResourcesQuerySchema } from '../schemas/resources-query.schemas.js';
 import { setResourceActiveBodySchema, updateResourceBodySchema } from '../schemas/update-resource.schemas.js';
-import { uploadResourceBodySchema } from '../schemas/upload-resource.schemas.js';
+import { uploadResourceBodySchema, uploadResourceVersionBodySchema } from '../schemas/upload-resource.schemas.js';
 
 const resourceRepository = new ResourceRepository();
 const storageService = new LocalResourceStorageService();
@@ -35,6 +36,7 @@ const setResourceActiveUseCase = new SetResourceActiveUseCase(resourceRepository
 const createResourceVersionUseCase = new CreateResourceVersionUseCase(resourceRepository);
 const getResourceDownloadUseCase = new GetResourceDownloadUseCase(resourceRepository);
 const deleteResourceUseCase = new DeleteResourceUseCase(resourceRepository);
+const auditResourcesUseCase = new AuditResourcesUseCase(resourceRepository);
 
 function toValidationError(error: ZodError, message: string) {
   return new ValidationAppError(message, error.flatten());
@@ -83,6 +85,15 @@ export class ResourcesController {
       return res.json({ ok: true, data });
     } catch (error) {
       return next(error instanceof ZodError ? toValidationError(error, 'Invalid resources query') : error);
+    }
+  }
+
+  async auditResources(_req: Request, res: Response, next: NextFunction) {
+    try {
+      const data = await auditResourcesUseCase.execute();
+      return res.json({ ok: true, data });
+    } catch (error) {
+      return next(error);
     }
   }
 
@@ -135,6 +146,7 @@ export class ResourcesController {
         month: body.month,
         year: body.year,
         active: body.active,
+        weekOptions: body.weekOptions,
         createdById: body.createdById,
         initialVersion: {
           sourceType: 'UPLOAD',
@@ -196,6 +208,44 @@ export class ResourcesController {
       return res.status(201).json({ ok: true, data });
     } catch (error) {
       return next(error instanceof ZodError ? toValidationError(error, 'Invalid create version body') : error);
+    }
+  }
+
+  async uploadVersion(req: Request, res: Response, next: NextFunction) {
+    try {
+      const { resourceId } = resourceIdParamsSchema.parse(req.params);
+      if (!req.file) {
+        return next(new ValidationAppError('PDF file is required in field "file"'));
+      }
+
+      assertPdfContent(req.file);
+
+      const body = uploadResourceVersionBodySchema.parse(req.body);
+      const data = await createResourceVersionUseCase.execute({
+        resourceId,
+        uploadedById: body.uploadedById,
+        version: {
+          sourceType: 'UPLOAD',
+          fileName: req.file.originalname,
+          mimeType: req.file.mimetype || 'application/pdf',
+          storageProvider: body.storageProvider,
+          fileContentBase64: req.file.buffer.toString('base64'),
+        },
+      });
+
+      const extraction =
+        body.extractText && data.currentVersion?.id
+          ? await extractionService.extractVersion(data.currentVersion.id)
+          : null;
+      const refreshed = await getResourceByIdUseCase.execute(resourceId);
+
+      return res.status(201).json({
+        ok: true,
+        data: refreshed ?? data,
+        extraction,
+      });
+    } catch (error) {
+      return next(error instanceof ZodError ? toValidationError(error, 'Invalid upload resource version body') : error);
     }
   }
 

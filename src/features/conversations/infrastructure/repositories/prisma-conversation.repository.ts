@@ -38,10 +38,18 @@ const conversationSelect = {
       id: true,
       status: true,
       studentAge: true,
+      cityOfResidence: true,
+      preferredStartMonth: true,
+      preferredStartYear: true,
+      weeks: true,
+      notes: true,
+      qualificationJson: true,
       createdAt: true,
       country: { select: { name: true } },
       family: { select: { name: true } },
+      location: { select: { name: true } },
       program: { select: { name: true } },
+      accommodationType: { select: { name: true } },
     },
   },
   messages: {
@@ -81,15 +89,30 @@ function mapConversation(record: ConversationRecord): ConversationDetail {
     contact: record.contact,
     inquiriesCount: record._count.inquiries,
     messagesCount: record._count.messages,
-    inquiries: record.inquiries.map((item) => ({
-      id: item.id,
-      status: item.status,
-      studentAge: item.studentAge,
-      countryName: item.country?.name ?? null,
-      familyName: item.family?.name ?? null,
-      programName: item.program?.name ?? null,
-      createdAt: item.createdAt,
-    })),
+    inquiries: record.inquiries.map((item) => {
+      const qualification = item.qualificationJson as Record<string, unknown> | null;
+      const residenceCountry =
+        qualification && typeof qualification.residenceCountry === 'string' && qualification.residenceCountry.trim().length > 0
+          ? qualification.residenceCountry.trim()
+          : null;
+      return {
+        id: item.id,
+        status: item.status,
+        studentAge: item.studentAge,
+        residenceCountry,
+        cityOfResidence: item.cityOfResidence,
+        countryName: item.country?.name ?? null,
+        familyName: item.family?.name ?? null,
+        locationName: item.location?.name ?? null,
+        programName: item.program?.name ?? null,
+        accommodationName: item.accommodationType?.name ?? null,
+        preferredStartMonth: item.preferredStartMonth,
+        preferredStartYear: item.preferredStartYear,
+        weeks: item.weeks,
+        notes: item.notes,
+        createdAt: item.createdAt,
+      };
+    }),
     messages: record.messages.map((item) => ({
       id: item.id,
       direction: item.direction,

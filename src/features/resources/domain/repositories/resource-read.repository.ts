@@ -4,6 +4,7 @@ import type {
   ListResourcesQuery,
   ResourceDetail,
   ResourceDownload,
+  ResourceAuditReport,
   ResourceListItem,
   SetResourceActiveInput,
   UpdateResourceInput,
@@ -18,4 +19,5 @@ export interface ResourceReadRepository {
   createResourceVersion(input: CreateResourceVersionInput): Promise<ResourceDetail>;
   getDownload(resourceId: string, versionId: string): Promise<ResourceDownload | null>;
   deleteResource(resourceId: string): Promise<void>;
+  auditResources(): Promise<ResourceAuditReport>;
 }

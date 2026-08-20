@@ -58,6 +58,19 @@ export type CatalogCountry = {
   active: boolean;
 };
 
+export type CreateCatalogCountryInput = {
+  code: string;
+  name: string;
+  active: boolean;
+};
+
+export type UpdateCatalogCountryInput = {
+  countryId: string;
+  code?: string;
+  name?: string;
+  active?: boolean;
+};
+
 export type CatalogFamily = {
   id: string;
   key: CatalogFamilyKey;
@@ -73,6 +86,23 @@ export type CatalogProgramLocation = {
   description: string | null;
   active: boolean;
   country: CatalogCountry;
+};
+
+export type CreateCatalogLocationInput = {
+  countryCode: string;
+  name: string;
+  venueName?: string | null;
+  description?: string | null;
+  active: boolean;
+};
+
+export type UpdateCatalogLocationInput = {
+  locationId: string;
+  countryCode?: string;
+  name?: string;
+  venueName?: string | null;
+  description?: string | null;
+  active?: boolean;
 };
 
 export type CatalogProgramPrice = {
@@ -116,6 +146,7 @@ export type CatalogProgram = {
   quoteMode: CatalogQuoteMode | null;
   minWeeks: number | null;
   maxWeeks: number | null;
+  weekOptions: number[];
   allowsMiniStay: boolean;
   miniStayGroupOnly: boolean;
   ruleNotes: string | null;
