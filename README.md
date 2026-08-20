@@ -60,6 +60,10 @@ Ese archivo está pensado para que otro asistente o desarrollador entienda rápi
 - **Zod**
 - **Pino**
 
+## Despliegue Docker
+
+La configuración de producción con Docker Compose, volumen persistente para PDFs y procedimiento de Ubuntu está en [docs/deployment-ubuntu.md](docs/deployment-ubuntu.md).
+
 ## Estado actual
 
 Actualmente el backend ya cuenta con:

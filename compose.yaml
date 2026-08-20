@@ -1,0 +1,52 @@
+name: tktours-concierge
+
+services:
+  api:
+    build:
+      context: .
+      target: runtime
+    image: tktours-concierge-backend:local
+    env_file:
+      - .env
+    environment:
+      NODE_ENV: production
+      PORT: 4001
+      RESOURCES_STORAGE_DIR: /app/storage/resources
+    ports:
+      - "${HOST_PORT:-4001}:4001"
+    volumes:
+      - type: bind
+        source: ${RESOURCES_HOST_DIR:?Set RESOURCES_HOST_DIR in .env}
+        target: /app/storage/resources
+    init: true
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    restart: unless-stopped
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:4001/health').then((response) => process.exit(response.ok ? 0 : 1)).catch(() => process.exit(1))"
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    logging:
+      options:
+        max-size: 10m
+        max-file: "3"
+
+  migrate:
+    profiles: [migrate]
+    build:
+      context: .
+      target: migrations
+    env_file:
+      - .env
+    environment:
+      NODE_ENV: production
+    restart: "no"
