@@ -26,8 +26,8 @@ Usa el formato estricto `CLAVE=valor`, sin espacios alrededor de `=`. Docker Com
 Construye y levanta la API:
 
 ```bash
-docker compose build --pull api
-docker compose up -d api
+docker compose build --pull tktours-concierge-backend
+docker compose up -d tktours-concierge-backend
 docker compose ps
 curl http://127.0.0.1:4001/health
 ```
@@ -50,7 +50,7 @@ El script recibe la contraseña solo como variable temporal del shell. No la agr
 
 ```bash
 ADMIN_PASSWORD='cambia-esta-contrasena' \
-  docker compose run --rm --no-deps -e ADMIN_PASSWORD api \
+  docker compose run --rm --no-deps -e ADMIN_PASSWORD tktours-concierge-backend \
   node dist/src/scripts/createAdminUser.js \
   --name Luz --email luz@tktours.com --role ADMIN
 ```
@@ -63,8 +63,8 @@ Después de que los cambios estén fusionados y enviados a `main`:
 
 ```bash
 git pull --ff-only origin main
-docker compose build --pull api
+docker compose build --pull tktours-concierge-backend
 # Ejecuta migrate solo después de reconciliar el historial de Prisma.
-docker compose up -d --force-recreate api
-docker compose logs --tail=100 api
+docker compose up -d --force-recreate tktours-concierge-backend
+docker compose logs --tail=100 tktours-concierge-backend
 ```

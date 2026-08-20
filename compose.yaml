@@ -17,7 +17,7 @@ services:
       - resources:/app/storage/resources
     restart: "no"
 
-  api:
+  tktours-concierge-backend:
     build:
       context: .
       target: runtime
