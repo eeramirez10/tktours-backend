@@ -58,10 +58,6 @@ services:
       options:
         max-size: 10m
         max-file: "3"
-    networks:
-      infra-network:
-        aliases:
-          - tktours-concierge-backend
 
   migrate:
     profiles: [migrate]
@@ -79,15 +75,8 @@ services:
       - ALL
     tmpfs:
       - /tmp:mode=1777,size=64m
-    networks:
-      - infra-network
 
 volumes:
   resources:
     external: true
     name: tktours-concierge-resources
-
-networks:
-  infra-network:
-    external: true
-    name: infra-network

@@ -10,13 +10,7 @@
 docker volume create tktours-concierge-resources
 ```
 
-4. Confirma o crea la red compartida para el proxy inverso:
-
-```bash
-docker network inspect infra-network >/dev/null 2>&1 || docker network create infra-network
-```
-
-5. Crea el archivo de variables sin versionarlo:
+4. Crea el archivo de variables sin versionarlo:
 
 ```bash
 cp deploy/.env.production.example .env
