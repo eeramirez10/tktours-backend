@@ -3,6 +3,11 @@ import { Router } from 'express';
 import { resourcesController, uploadResourcePdf } from '../controllers/resources.controller.js';
 
 export const resourcesRoutes = Router();
+export const publicResourceDownloadRoutes = Router();
+
+publicResourceDownloadRoutes.get('/resources/:resourceId/versions/:versionId/download', (req, res, next) =>
+  resourcesController.downloadVersion(req, res, next),
+);
 
 resourcesRoutes.get('/resources/health', (req, res) => resourcesController.getHealth(req, res));
 resourcesRoutes.get('/resources/audit', (req, res, next) => resourcesController.auditResources(req, res, next));
@@ -18,8 +23,5 @@ resourcesRoutes.post('/resources/:resourceId/versions/upload', uploadResourcePdf
 resourcesRoutes.post('/resources/:resourceId/versions', (req, res, next) => resourcesController.createVersion(req, res, next));
 resourcesRoutes.post('/resources/:resourceId/versions/:versionId/extract', (req, res, next) =>
   resourcesController.extractVersion(req, res, next),
-);
-resourcesRoutes.get('/resources/:resourceId/versions/:versionId/download', (req, res, next) =>
-  resourcesController.downloadVersion(req, res, next),
 );
 resourcesRoutes.delete('/resources/:resourceId', (req, res, next) => resourcesController.deleteResource(req, res, next));

@@ -92,7 +92,6 @@ export const createResourceBodySchema = z
     year: z.number().int().min(2000).max(2100).nullable().optional(),
     active: z.boolean().optional(),
     weekOptions: optionalWeekOptionsSchema,
-    createdById: optionalNullableTrimmedStringSchema,
     initialVersion: initialVersionSchema,
   })
   .superRefine((value, ctx) => {
@@ -119,7 +118,6 @@ export const createResourceBodySchema = z
     year,
     active,
     weekOptions,
-    createdById,
     initialVersion,
   }) => ({
     countryCode: countryCode.trim().toUpperCase(),
@@ -136,6 +134,5 @@ export const createResourceBodySchema = z
     year: year ?? null,
     active: active ?? true,
     weekOptions,
-    createdById: createdById ?? null,
     initialVersion: initialVersion ?? null,
   }));

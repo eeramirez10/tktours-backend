@@ -30,3 +30,9 @@ export class ConflictAppError extends AppError {
     this.name = 'ConflictAppError';
   }
 }
+
+export class UnauthorizedAppError extends AppError {
+  constructor(message = 'Authentication is required', details?: unknown) {
+    super(message, 401, 'UNAUTHORIZED', details);
+  }
+}

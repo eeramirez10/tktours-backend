@@ -3,7 +3,7 @@ import type { NextFunction, Request, Response } from 'express';
 import multer from 'multer';
 import { ZodError } from 'zod';
 
-import { NotFoundAppError, ValidationAppError } from '../../../../../shared/domain/errors/app-error.js';
+import { NotFoundAppError, UnauthorizedAppError, ValidationAppError } from '../../../../../shared/domain/errors/app-error.js';
 import { ResourceExtractionService } from '../../../application/services/resource-extraction.service.js';
 import { CreateResourceUseCase } from '../../../application/use-cases/create-resource.use-case.js';
 import { CreateResourceVersionUseCase } from '../../../application/use-cases/create-resource-version.use-case.js';
@@ -51,6 +51,14 @@ function assertPdfContent(file: Express.Multer.File): void {
   if (header !== '%PDF-') {
     throw new ValidationAppError('Uploaded file content is not a valid PDF');
   }
+}
+
+function getAuthenticatedAdminId(req: Request): string {
+  if (!req.admin) {
+    throw new UnauthorizedAppError();
+  }
+
+  return req.admin.id;
 }
 
 export const uploadResourcePdf = multer({
@@ -115,7 +123,7 @@ export class ResourcesController {
   async createResource(req: Request, res: Response, next: NextFunction) {
     try {
       const body = createResourceBodySchema.parse(req.body);
-      const data = await createResourceUseCase.execute(body);
+      const data = await createResourceUseCase.execute({ ...body, createdById: getAuthenticatedAdminId(req) });
 
       return res.status(201).json({ ok: true, data });
     } catch (error) {
@@ -147,7 +155,7 @@ export class ResourcesController {
         year: body.year,
         active: body.active,
         weekOptions: body.weekOptions,
-        createdById: body.createdById,
+        createdById: getAuthenticatedAdminId(req),
         initialVersion: {
           sourceType: 'UPLOAD',
           fileName: req.file.originalname,
@@ -174,7 +182,11 @@ export class ResourcesController {
     try {
       const { resourceId } = resourceIdParamsSchema.parse(req.params);
       const body = updateResourceBodySchema.parse(req.body);
-      const data = await updateResourceUseCase.execute({ resourceId, ...body });
+      const data = await updateResourceUseCase.execute({
+        resourceId,
+        ...body,
+        updatedById: getAuthenticatedAdminId(req),
+      });
 
       return res.json({ ok: true, data });
     } catch (error) {
@@ -186,7 +198,11 @@ export class ResourcesController {
     try {
       const { resourceId } = resourceIdParamsSchema.parse(req.params);
       const body = setResourceActiveBodySchema.parse(req.body);
-      const data = await setResourceActiveUseCase.execute({ resourceId, ...body });
+      const data = await setResourceActiveUseCase.execute({
+        resourceId,
+        ...body,
+        updatedById: getAuthenticatedAdminId(req),
+      });
 
       return res.json({ ok: true, data });
     } catch (error) {
@@ -198,11 +214,10 @@ export class ResourcesController {
     try {
       const { resourceId } = resourceIdParamsSchema.parse(req.params);
       const body = createResourceVersionBodySchema.parse(req.body);
-      const { uploadedById = null, ...version } = body;
       const data = await createResourceVersionUseCase.execute({
         resourceId,
-        uploadedById,
-        version,
+        uploadedById: getAuthenticatedAdminId(req),
+        version: body,
       });
 
       return res.status(201).json({ ok: true, data });
@@ -223,7 +238,7 @@ export class ResourcesController {
       const body = uploadResourceVersionBodySchema.parse(req.body);
       const data = await createResourceVersionUseCase.execute({
         resourceId,
-        uploadedById: body.uploadedById,
+        uploadedById: getAuthenticatedAdminId(req),
         version: {
           sourceType: 'UPLOAD',
           fileName: req.file.originalname,

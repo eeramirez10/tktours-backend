@@ -70,7 +70,6 @@ export const updateResourceBodySchema = z
     year: z.number().int().min(2000).max(2100).nullable().optional(),
     active: z.boolean().optional(),
     weekOptions: optionalWeekOptionsSchema,
-    updatedById: nullableTrimmedStringSchema,
   })
   .superRefine((value, ctx) => {
     if (value.month != null && value.year === undefined) {
@@ -95,10 +94,8 @@ export const updateResourceBodySchema = z
     title: value.title?.trim(),
     programSlug: value.programSlug ?? undefined,
     locationSlug: value.locationSlug ?? undefined,
-    updatedById: value.updatedById ?? null,
   }));
 
 export const setResourceActiveBodySchema = z.object({
   active: z.boolean(),
-  updatedById: nullableTrimmedStringSchema,
 });

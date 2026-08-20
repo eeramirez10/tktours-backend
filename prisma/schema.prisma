@@ -116,16 +116,27 @@ enum ConciergeToolCallStatus {
   FAILED
 }
 
+enum UserRole {
+  ADMIN
+  OPERATOR
+}
+
 model AdminUser {
   id               String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   email            String            @unique
   name             String
-  role             String?
+  passwordHash     String
+  role             UserRole          @default(OPERATOR)
+  active           Boolean           @default(true)
+  lastLoginAt      DateTime?
   createdResources Resource[]        @relation("ResourceCreatedBy")
   updatedResources Resource[]        @relation("ResourceUpdatedBy")
   uploadedVersions ResourceVersion[] @relation("VersionUploadedBy")
   createdAt        DateTime          @default(now())
   updatedAt        DateTime          @updatedAt
+
+  @@index([active, role])
+  @@map("users")
 }
 
 model Country {

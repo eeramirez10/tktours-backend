@@ -102,7 +102,6 @@ export const uploadResourceBodySchema = z
     year: optionalIntStringSchema.pipe(z.number().int().min(2000).max(2100).optional()),
     active: optionalBooleanStringSchema,
     weekOptions: optionalWeekOptionsSchema,
-    createdById: optionalNullableTrimmedStringSchema,
     storageProvider: z.enum(STORAGE_PROVIDERS).optional(),
     extractText: optionalBooleanStringSchema,
   })
@@ -130,19 +129,16 @@ export const uploadResourceBodySchema = z
     year: value.year ?? null,
     active: value.active ?? true,
     weekOptions: value.weekOptions,
-    createdById: value.createdById ?? null,
     storageProvider: value.storageProvider ?? 'SUPABASE',
     extractText: value.extractText ?? true,
   }));
 
 export const uploadResourceVersionBodySchema = z
   .object({
-    uploadedById: optionalNullableTrimmedStringSchema,
     storageProvider: z.enum(STORAGE_PROVIDERS).optional(),
     extractText: optionalBooleanStringSchema,
   })
   .transform((value) => ({
-    uploadedById: value.uploadedById ?? null,
     storageProvider: value.storageProvider ?? 'SUPABASE',
     extractText: value.extractText ?? true,
   }));
