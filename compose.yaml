@@ -1,11 +1,28 @@
 name: tktours-concierge
 
 services:
+  volume-init:
+    build:
+      context: .
+      target: runtime
+    user: "0:0"
+    entrypoint:
+      - /bin/sh
+      - -c
+    command:
+      - >-
+        mkdir -p /app/storage/resources
+        && chown -R app:app /app/storage/resources
+    volumes:
+      - resources:/app/storage/resources
+    restart: "no"
+
   api:
     build:
       context: .
       target: runtime
     image: tktours-concierge-backend:local
+    container_name: tktours-concierge-backend
     env_file:
       - .env
     environment:
@@ -13,11 +30,12 @@ services:
       PORT: 4001
       RESOURCES_STORAGE_DIR: /app/storage/resources
     ports:
-      - "${HOST_PORT:-4001}:4001"
+      - "127.0.0.1:${HOST_PORT:-4001}:4001"
     volumes:
-      - type: bind
-        source: ${RESOURCES_HOST_DIR:?Set RESOURCES_HOST_DIR in .env}
-        target: /app/storage/resources
+      - resources:/app/storage/resources
+    depends_on:
+      volume-init:
+        condition: service_completed_successfully
     init: true
     read_only: true
     tmpfs:
@@ -36,9 +54,14 @@ services:
       retries: 3
       start_period: 15s
     logging:
+      driver: local
       options:
         max-size: 10m
         max-file: "3"
+    networks:
+      infra-network:
+        aliases:
+          - tktours-concierge-backend
 
   migrate:
     profiles: [migrate]
@@ -50,3 +73,21 @@ services:
     environment:
       NODE_ENV: production
     restart: "no"
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    tmpfs:
+      - /tmp:mode=1777,size=64m
+    networks:
+      - infra-network
+
+volumes:
+  resources:
+    external: true
+    name: tktours-concierge-resources
+
+networks:
+  infra-network:
+    external: true
+    name: infra-network

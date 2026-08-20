@@ -4,20 +4,26 @@
 
 1. Instala Docker Engine y Docker Compose Plugin en el servidor.
 2. Clona el repositorio y cambia a `main`.
-3. Crea el directorio persistente para los PDFs. El contenedor usa el UID/GID `10001`:
+3. Crea una vez el volumen externo que persistirá los PDFs:
 
 ```bash
-sudo install -d -o 10001 -g 10001 -m 750 /srv/tktours/resources
+docker volume create tktours-concierge-resources
 ```
 
-4. Crea el archivo de variables sin versionarlo:
+4. Confirma o crea la red compartida para el proxy inverso:
+
+```bash
+docker network inspect infra-network >/dev/null 2>&1 || docker network create infra-network
+```
+
+5. Crea el archivo de variables sin versionarlo:
 
 ```bash
 cp deploy/.env.production.example .env
 chmod 600 .env
 ```
 
-Completa al menos `DATABASE_URL`, `ADMIN_JWT_SECRET`, `PUBLIC_BASE_URL`, `CORS_ORIGIN`, `OPENAI_API_KEY` y las credenciales de Twilio. `RESOURCES_HOST_DIR` debe conservar `/srv/tktours/resources` salvo que el volumen se monte en otro lugar.
+Completa al menos `DATABASE_URL`, `ADMIN_JWT_SECRET`, `PUBLIC_BASE_URL`, `CORS_ORIGIN`, `OPENAI_API_KEY` y las credenciales de Twilio.
 
 Usa el formato estricto `CLAVE=valor`, sin espacios alrededor de `=`. Docker Compose no acepta el formato flexible que tolera `dotenv`.
 
@@ -32,7 +38,7 @@ docker compose ps
 curl http://127.0.0.1:4001/health
 ```
 
-Los archivos se guardan fuera del contenedor, en `/srv/tktours/resources`. Respáldalos junto con la base de datos.
+Los archivos se guardan en el volumen `tktours-concierge-resources`, independiente del contenedor y del proyecto Compose. Respáldalo junto con la base de datos.
 
 ## Migraciones Prisma
 
