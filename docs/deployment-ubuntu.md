@@ -45,6 +45,18 @@ docker compose --profile migrate run --rm migrate
 
 No ejecuta `migrate dev` ni hace reset de la base de datos. Ejecútalo antes de cada despliegue que incluya migraciones.
 
+### Recuperar una migración parcial
+
+Si la base ya tenía cambios de catálogo o ubicaciones y falló `20260820120000_sync_production_schema`, primero actualiza el código que incluye la migración de reconciliación. Después marca esa migración fallida como aplicada y ejecuta el despliegue normal:
+
+```bash
+docker compose --profile migrate run --rm migrate \
+  pnpm exec prisma migrate resolve --applied 20260820120000_sync_production_schema
+docker compose --profile migrate run --rm migrate
+```
+
+Este procedimiento es específico para esa migración. No uses `migrate resolve --applied` de forma general para omitir migraciones.
+
 ## Crear o cambiar el administrador inicial
 
 El script recibe la contraseña solo como variable temporal del shell. No la agregues al `.env` ni a variables `VITE_*` del frontend:
