@@ -23,9 +23,10 @@ Usa el formato estricto `CLAVE=valor`, sin espacios alrededor de `=`. Docker Com
 
 ## Primera ejecución
 
-Construye y levanta la API:
+Aplica las migraciones antes de levantar la API y luego construye e inicia el servicio:
 
 ```bash
+docker compose --profile migrate run --rm migrate
 docker compose build --pull tktours-concierge-backend
 docker compose up -d tktours-concierge-backend
 docker compose ps
@@ -42,7 +43,7 @@ El servicio `migrate` ejecuta exclusivamente `prisma migrate deploy`:
 docker compose --profile migrate run --rm migrate
 ```
 
-No ejecuta `migrate dev` ni hace reset de la base de datos. Actualmente la rama de Neon tiene migraciones aplicadas que no existen en este repositorio; recupera o reconcilia ese historial antes de ejecutar este comando. La API puede iniciarse mientras el esquema remoto ya sea compatible.
+No ejecuta `migrate dev` ni hace reset de la base de datos. Ejecútalo antes de cada despliegue que incluya migraciones.
 
 ## Crear o cambiar el administrador inicial
 
@@ -63,8 +64,8 @@ Después de que los cambios estén fusionados y enviados a `main`:
 
 ```bash
 git pull --ff-only origin main
+docker compose --profile migrate run --rm migrate
 docker compose build --pull tktours-concierge-backend
-# Ejecuta migrate solo después de reconciliar el historial de Prisma.
 docker compose up -d --force-recreate tktours-concierge-backend
 docker compose logs --tail=100 tktours-concierge-backend
 ```
