@@ -13,7 +13,15 @@ export function createApp() {
 
   app.use(cors({ origin: env.CORS_ORIGIN ?? true }));
   app.use(express.urlencoded({ extended: false }));
-  app.use(express.json({ limit: '10mb' }));
+  app.use(express.json({
+    limit: '10mb',
+    verify: (req, _res, buffer) => {
+      const request = req as express.Request;
+      if (request.originalUrl.startsWith('/webhooks/meta/whatsapp')) {
+        request.rawBody = Buffer.from(buffer);
+      }
+    },
+  }));
   app.use(pinoHttp({ logger }));
 
   app.use(apiRouter);

@@ -1,0 +1,14 @@
+@baseUrl = http://localhost:3000
+@metaVerifyToken = REEMPLAZA_CON_TU_VERIFY_TOKEN
+
+### Health webhook Meta WhatsApp
+GET {{baseUrl}}/webhooks/meta/whatsapp/health
+Accept: application/json
+
+### Verificar webhook (Meta ejecuta esta solicitud al guardar la URL)
+GET {{baseUrl}}/webhooks/meta/whatsapp?hub.mode=subscribe&hub.verify_token={{metaVerifyToken}}&hub.challenge=challenge_local
+Accept: text/plain
+
+### El POST real debe venir firmado por Meta con X-Hub-Signature-256.
+### Configura en Meta Developers esta callback URL:
+### https://TU-DOMINIO/webhooks/meta/whatsapp

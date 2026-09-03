@@ -217,9 +217,9 @@ El schema actual incluye entidades como:
 - `GET /api/concierge/turns/:turnId`
 - `POST /api/concierge/run-turn`
 
-### WhatsApp / Twilio
-- `GET /webhooks/twilio/whatsapp/health`
-- `POST /webhooks/twilio/whatsapp`
+### WhatsApp / Meta Cloud API
+- `GET /webhooks/meta/whatsapp` (verificación)
+- `POST /webhooks/meta/whatsapp` (eventos firmados)
 
 ## Tools del concierge
 
@@ -267,30 +267,32 @@ Ejemplo en `.env.example`:
 - `NODE_ENV`
 - `RESOURCES_STORAGE_DIR`
 - `PUBLIC_BASE_URL` (ej. `https://tu-dominio.ngrok-free.app`)
-- `TWILIO_ACCOUNT_SID`
-- `TWILIO_AUTH_TOKEN`
-- `TWILIO_WHATSAPP_FROM`
+- `WHATSAPP_META_ACCESS_TOKEN`
+- `WHATSAPP_META_PHONE_NUMBER_ID`
+- `WHATSAPP_META_VERIFY_TOKEN`
+- `WHATSAPP_META_APP_SECRET`
+- `WHATSAPP_META_GRAPH_API_VERSION`
 
 No subir secretos reales al repo.
 
-## Pruebas con WhatsApp + Twilio
+## Pruebas con WhatsApp Cloud API
 
 Flujo implementado para webhook inbound:
 
-1. Twilio pega en `POST /webhooks/twilio/whatsapp` (form-urlencoded).
-2. El backend crea/recupera contacto por `waId` y conversación `WHATSAPP` abierta.
-3. Persiste mensaje inbound (`providerMessageId = MessageSid`).
+1. Meta envía eventos firmados a `POST /webhooks/meta/whatsapp`.
+2. El backend verifica `X-Hub-Signature-256`, crea/recupera el contacto por `waId` y abre la conversación `WHATSAPP`.
+3. Persiste el mensaje inbound usando el identificador `wamid` de Meta.
 4. Ejecuta `concierge.runTurn`.
-5. Envía respuesta por API de Twilio y guarda `providerMessageId` del outbound.
+5. Envía texto y PDFs por Cloud API y conserva los estados de entrega.
 
 ### Setup rápido
 
-1. Configura variables de Twilio en `.env`.
-2. Levanta backend (`npm run dev`).
-3. Expón local con túnel (ej. ngrok) y apunta Twilio webhook a:
-   - `https://TU-DOMINIO/webhooks/twilio/whatsapp`
-4. En Sandbox WhatsApp de Twilio (o número de prueba), manda un mensaje desde tu WhatsApp.
-5. Revisa trazas:
+1. En `.env.development` configura el access token y `WHATSAPP_META_PHONE_NUMBER_ID` del número de prueba de Meta.
+2. Levanta backend (`pnpm run dev`) y expónlo con un túnel HTTPS.
+3. En Meta Developers configura callback URL `https://TU-DOMINIO/webhooks/meta/whatsapp` y el mismo `WHATSAPP_META_VERIFY_TOKEN`.
+4. Suscribe el campo `messages` y manda un WhatsApp al número de prueba.
+5. En producción usa esas mismas variables en `.env`, pero con el token y phone-number ID del número productivo.
+6. Revisa trazas:
    - `GET /api/concierge/turns`
    - `GET /api/conversations`
 

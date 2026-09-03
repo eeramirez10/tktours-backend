@@ -11,12 +11,12 @@ import {
 import { requireAdminAuth } from '../../../../features/auth/presentation/http/middlewares/require-admin-auth.middleware.js';
 import { healthRoute } from './health.route.js';
 import { conciergeRoutes } from '../../../../features/concierge/presentation/http/routes/concierge.routes.js';
-import { twilioWhatsAppRoutes } from '../../../../features/whatsapp/presentation/http/routes/twilio-whatsapp.routes.js';
+import { metaWhatsAppRoutes } from '../../../../features/whatsapp/presentation/http/routes/meta-whatsapp.routes.js';
 
 export const apiRouter = Router();
 
 apiRouter.use(healthRoute);
-apiRouter.use(twilioWhatsAppRoutes);
+apiRouter.use(metaWhatsAppRoutes);
 apiRouter.use('/api/auth', adminAuthRoutes);
 apiRouter.use('/api', publicResourceDownloadRoutes);
 apiRouter.use('/api', requireAdminAuth);

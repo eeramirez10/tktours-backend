@@ -19,9 +19,11 @@ export const envSchema = z.object({
   OPENAI_API_KEY: nonEmptyString,
   OPENAI_MODEL: nonEmptyString.default('gpt-5.6-luna'),
   OPENAI_TIMEOUT_MS: z.coerce.number().int().min(1_000).max(120_000).default(30_000),
-  TWILIO_ACCOUNT_SID: z.string().trim().regex(/^AC[a-fA-F0-9]{32}$/, 'Must be a Twilio Account SID'),
-  TWILIO_AUTH_TOKEN: nonEmptyString,
-  TWILIO_WHATSAPP_FROM: z.string().trim().regex(/^whatsapp:\+\d{8,15}$/, 'Must be a WhatsApp sender number'),
+  WHATSAPP_META_ACCESS_TOKEN: nonEmptyString,
+  WHATSAPP_META_PHONE_NUMBER_ID: z.string().trim().regex(/^\d{5,25}$/, 'Must be a Meta WhatsApp phone number ID'),
+  WHATSAPP_META_VERIFY_TOKEN: z.string().trim().min(24, 'Must contain at least 24 characters'),
+  WHATSAPP_META_APP_SECRET: z.string().trim().regex(/^[a-fA-F0-9]{32}$/, 'Must be a Meta app secret'),
+  WHATSAPP_META_GRAPH_API_VERSION: z.string().trim().regex(/^v\d+\.\d+$/, 'Use a Graph API version such as v24.0'),
 });
 
 export type Env = z.infer<typeof envSchema>;

@@ -5,9 +5,11 @@ const validEnvironment = {
   ADMIN_JWT_SECRET: 'a'.repeat(32),
   PUBLIC_BASE_URL: 'https://api.example.com',
   OPENAI_API_KEY: 'test-openai-key',
-  TWILIO_ACCOUNT_SID: `AC${'0'.repeat(32)}`,
-  TWILIO_AUTH_TOKEN: 'test-twilio-token',
-  TWILIO_WHATSAPP_FROM: 'whatsapp:+14155238886',
+  WHATSAPP_META_ACCESS_TOKEN: 'test-meta-access-token',
+  WHATSAPP_META_PHONE_NUMBER_ID: '123456789012345',
+  WHATSAPP_META_VERIFY_TOKEN: 'test-meta-verify-token-value',
+  WHATSAPP_META_APP_SECRET: '0'.repeat(32),
+  WHATSAPP_META_GRAPH_API_VERSION: 'v24.0',
 };
 
 Object.assign(process.env, validEnvironment);

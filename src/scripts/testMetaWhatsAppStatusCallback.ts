@@ -1,10 +1,10 @@
 import assert from 'node:assert/strict';
 
 import { prisma } from '../shared/infrastructure/database/prisma.js';
-import { TwilioWhatsAppStatusService } from '../features/whatsapp/application/services/twilio-whatsapp-status.service.js';
+import { MetaWhatsAppStatusService } from '../features/whatsapp/application/services/meta-whatsapp-status.service.js';
 
 async function main() {
-  const source = `twilio-status-test-${Date.now()}`;
+  const source = `meta-whatsapp-status-test-${Date.now()}`;
   const conversation = await prisma.conversation.create({
     data: {
       channel: 'WHATSAPP',
@@ -20,31 +20,31 @@ async function main() {
       conversationId: conversation.id,
       direction: 'OUTBOUND',
       text: 'Mensaje de prueba',
-      providerMessageId: `SM-test-${Date.now()}`,
+      providerMessageId: `wamid.test.${Date.now()}`,
       mediaUrl: 'https://example.com/file.pdf',
       metadata: {
         source,
-        mediaTwilioSid: 'MM-test-primary',
-        mediaTwilioSids: ['MM-test-primary', 'MM-test-secondary'],
-        mediaTwilioStatuses: ['queued', 'queued'],
+        metaMediaMessageIds: ['wamid.test.primary', 'wamid.test.secondary'],
+        metaMediaStatuses: ['sent', 'sent'],
       },
     },
     select: { id: true, providerMessageId: true },
   });
 
-  const service = new TwilioWhatsAppStatusService();
+  const service = new MetaWhatsAppStatusService();
 
   try {
     await service.processStatusCallback({
-      MessageSid: message.providerMessageId!,
-      MessageStatus: 'delivered',
+      id: message.providerMessageId!,
+      status: 'delivered',
+      timestamp: String(Math.floor(Date.now() / 1000)),
     });
 
     await service.processStatusCallback({
-      MessageSid: 'MM-test-secondary',
-      MessageStatus: 'failed',
-      ErrorCode: '63019',
-      ErrorMessage: 'Unable to fetch media',
+      id: 'wamid.test.secondary',
+      status: 'failed',
+      timestamp: String(Math.floor(Date.now() / 1000)),
+      errors: [{ code: 131026, title: 'Message undeliverable' }],
     });
 
     const stored = await prisma.message.findUniqueOrThrow({
@@ -53,12 +53,12 @@ async function main() {
     });
 
     const metadata = (stored.metadata as Record<string, unknown> | null) ?? {};
-    const mediaStatuses = Array.isArray(metadata.mediaTwilioStatuses) ? metadata.mediaTwilioStatuses : [];
-    assert.equal(metadata.twilioStatus, 'delivered');
+    const mediaStatuses = Array.isArray(metadata.metaMediaStatuses) ? metadata.metaMediaStatuses : [];
+    assert.equal(metadata.metaStatus, 'delivered');
     assert.equal(mediaStatuses[1], 'failed');
-    assert.equal(metadata.twilioErrorCode, '63019');
+    assert.deepEqual(metadata.metaErrors, [{ code: 131026, title: 'Message undeliverable' }]);
 
-    console.log('OK: twilio status callback test passed');
+    console.log('OK: Meta WhatsApp status callback test passed');
     console.log(`conversationId=${conversation.id}`);
   } finally {
     await prisma.conversation.delete({ where: { id: conversation.id } }).catch(() => null);
@@ -67,7 +67,7 @@ async function main() {
 }
 
 main().catch((error) => {
-  console.error('FAIL: twilio status callback test failed');
+  console.error('FAIL: Meta WhatsApp status callback test failed');
   console.error(error);
   process.exitCode = 1;
 });

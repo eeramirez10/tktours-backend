@@ -41,7 +41,7 @@ export class WhatsappConversationThreadService {
           status: 'OPEN',
           currentStage: 'START',
           contextJson: {
-            source: 'twilio-webhook',
+            source: 'meta-whatsapp-webhook',
           },
         },
         select: { id: true },
