@@ -10,6 +10,7 @@
     "start": "NODE_ENV=production node dist/src/index.js",
     "test:memory-chain": "tsx src/scripts/testConciergeMemoryChain.ts",
     "test:camp-season-flow": "tsx src/scripts/testCampBrochureSeasonFlow.ts",
+    "test:env-config": "tsx src/scripts/testEnvironmentConfig.ts",
     "test:twilio-status": "tsx src/scripts/testTwilioStatusCallback.ts",
     "conversations:consolidate-whatsapp": "tsx src/scripts/consolidateWhatsappConversationThreads.ts",
     "prisma:generate": "prisma generate",

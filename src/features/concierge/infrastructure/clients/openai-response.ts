@@ -1,5 +1,7 @@
 import OpenAI from 'openai';
 
+import { env } from '../../../../shared/config/env.js';
+
 export type ResponsesTextResult = {
   id: string;
   outputText: string;
@@ -19,10 +21,11 @@ export class OpenAiResponsesClient {
 
   constructor(options: OpenAiResponsesClientOptions) {
     const { apiKey, model, timeoutMs } = options;
-    this.client = new OpenAI({ apiKey: apiKey ?? process.env.OPENAI_API_KEY });
-    const configuredModel = model?.trim() || process.env.OPENAI_MODEL?.trim();
-    this.model = configuredModel && configuredModel.length > 0 ? configuredModel : 'gpt-5.4-nano';
-    this.timeoutMs = typeof timeoutMs === 'number' && Number.isFinite(timeoutMs) && timeoutMs > 0 ? timeoutMs : 30000;
+    this.client = new OpenAI({ apiKey: apiKey ?? env.OPENAI_API_KEY });
+    this.model = model?.trim() || env.OPENAI_MODEL;
+    this.timeoutMs = typeof timeoutMs === 'number' && Number.isFinite(timeoutMs) && timeoutMs > 0
+      ? timeoutMs
+      : env.OPENAI_TIMEOUT_MS;
   }
 
   getModel(): string {
