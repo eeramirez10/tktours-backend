@@ -3,6 +3,7 @@ import { Prisma } from '@prisma/client';
 import { ConciergeOrchestratorService } from '../../../concierge/application/services/concierge-orchestrator.service.js';
 import { NotFoundAppError } from '../../../../shared/domain/errors/app-error.js';
 import { prisma } from '../../../../shared/infrastructure/database/prisma.js';
+import { conversationRealtimeHub } from '../../infrastructure/realtime/conversation-realtime-hub.js';
 import { PrismaConversationRepository } from '../../infrastructure/repositories/prisma-conversation.repository.js';
 
 function toJsonInput(value: Record<string, unknown>): Prisma.InputJsonValue {
@@ -60,15 +61,43 @@ export class RunAdminConciergeTurnUseCase {
       return message;
     });
 
-    await this.concierge.runTurn({
+    conversationRealtimeHub.publish({
+      type: 'conversation.message.received',
       conversationId: conversation.id,
-      incomingMessageId: inboundMessage.id,
+      messageId: inboundMessage.id,
     });
+    conversationRealtimeHub.publish({
+      type: 'concierge.processing',
+      conversationId: conversation.id,
+      messageId: inboundMessage.id,
+    });
+
+    try {
+      await this.concierge.runTurn({
+        conversationId: conversation.id,
+        incomingMessageId: inboundMessage.id,
+      });
+    } catch (error) {
+      conversationRealtimeHub.publish({
+        type: 'concierge.failed',
+        conversationId: conversation.id,
+        messageId: inboundMessage.id,
+        error: error instanceof Error ? error.message : 'Unknown concierge error',
+      });
+      throw error;
+    }
 
     const updatedConversation = await this.conversationRepository.findById(conversation.id);
     if (!updatedConversation) {
       throw new NotFoundAppError('Conversation not found');
     }
+
+    const outboundMessage = [...updatedConversation.messages].reverse().find((message) => message.direction === 'OUTBOUND');
+    conversationRealtimeHub.publish({
+      type: 'concierge.replied',
+      conversationId: conversation.id,
+      ...(outboundMessage ? { messageId: outboundMessage.id } : {}),
+    });
 
     return updatedConversation;
   }

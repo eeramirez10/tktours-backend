@@ -1,4 +1,5 @@
 import { createApp } from './app.js';
+import { conversationRealtimeHub } from './features/conversations/infrastructure/realtime/conversation-realtime-hub.js';
 import { env } from './shared/config/env.js';
 import { logger } from './shared/config/logger.js';
 
@@ -8,8 +9,11 @@ const server = app.listen(env.PORT, '0.0.0.0', () => {
   logger.info({ port: env.PORT }, 'server listening');
 });
 
+conversationRealtimeHub.attach(server);
+
 function shutdown(signal: NodeJS.Signals) {
   logger.info({ signal }, 'shutting down server');
+  conversationRealtimeHub.close();
 
   server.close((error) => {
     if (error) {

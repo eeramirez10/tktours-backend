@@ -1,6 +1,7 @@
 import { Prisma } from '@prisma/client';
 import { z } from 'zod';
 
+import { conversationRealtimeHub } from '../../../conversations/infrastructure/realtime/conversation-realtime-hub.js';
 import { ConciergeOrchestratorService } from '../../../concierge/application/services/concierge-orchestrator.service.js';
 import { env } from '../../../../shared/config/env.js';
 import { logger } from '../../../../shared/config/logger.js';
@@ -163,9 +164,39 @@ export class MetaWhatsAppInboundService {
 
     await this.ensureOpenInquiry(conversation.id, contact.id);
 
-    const turn = await this.concierge.runTurn({
+    conversationRealtimeHub.publish({
+      type: 'conversation.message.received',
       conversationId: conversation.id,
-      incomingMessageId: inboundMessage.id,
+      messageId: inboundMessage.id,
+    });
+    conversationRealtimeHub.publish({
+      type: 'concierge.processing',
+      conversationId: conversation.id,
+      messageId: inboundMessage.id,
+    });
+
+    let turn;
+    try {
+      turn = await this.concierge.runTurn({
+        conversationId: conversation.id,
+        incomingMessageId: inboundMessage.id,
+      });
+    } catch (error) {
+      conversationRealtimeHub.publish({
+        type: 'concierge.failed',
+        conversationId: conversation.id,
+        messageId: inboundMessage.id,
+        error: error instanceof Error ? error.message : 'Unknown concierge error',
+      });
+      throw error;
+    }
+
+    const outboundMessage =
+      [...turn.persistedConversation.messages].reverse().find((message) => message.direction === 'OUTBOUND') ?? null;
+    conversationRealtimeHub.publish({
+      type: 'concierge.replied',
+      conversationId: conversation.id,
+      ...(outboundMessage ? { messageId: outboundMessage.id } : {}),
     });
 
     const replyText = turn.modelResponse.structured.replyText.trim();
@@ -173,8 +204,6 @@ export class MetaWhatsAppInboundService {
       return;
     }
 
-    const outboundMessage =
-      [...turn.persistedConversation.messages].reverse().find((message) => message.direction === 'OUTBOUND') ?? null;
     const textResult = await this.sendWhatsAppMessage({ to: waId, body: replyText });
     const mediaUrls = this.getOutboundMediaUrls(outboundMessage);
     const mediaResults = await Promise.all(
@@ -205,6 +234,12 @@ export class MetaWhatsAppInboundService {
           mediaUrls,
         }),
       },
+    });
+
+    conversationRealtimeHub.publish({
+      type: 'conversation.updated',
+      conversationId: conversation.id,
+      messageId: outboundMessage.id,
     });
   }
 
