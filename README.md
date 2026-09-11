@@ -307,7 +307,6 @@ Flujo implementado para webhook inbound:
 - `npm run prisma:studio`
 - `npm run prisma:validate`
 - `npm run prisma:seed`
-- `npm run seed:concierge:test`
 
 ## CI
 

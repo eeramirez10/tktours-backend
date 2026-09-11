@@ -19,8 +19,7 @@
     "prisma:studio": "prisma studio",
     "prisma:validate": "prisma validate",
     "prisma:seed": "tsx prisma/seed.ts",
-    "admin:create": "NODE_ENV=development tsx src/scripts/createAdminUser.ts",
-    "seed:concierge:test": "tsx src/scripts/seedConciergeTestData.ts"
+    "admin:create": "NODE_ENV=development tsx src/scripts/createAdminUser.ts"
   },
   "prisma": {
     "seed": "tsx prisma/seed.ts"
