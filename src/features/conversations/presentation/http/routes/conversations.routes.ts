@@ -10,3 +10,4 @@ conversationsRoutes.get('/conversations/:conversationId', (req, res, next) => co
 conversationsRoutes.post('/conversations', (req, res, next) => conversationsController.createConversation(req, res, next));
 conversationsRoutes.patch('/conversations/:conversationId', (req, res, next) => conversationsController.updateConversation(req, res, next));
 conversationsRoutes.post('/conversations/:conversationId/messages', (req, res, next) => conversationsController.createMessage(req, res, next));
+conversationsRoutes.post('/conversations/:conversationId/assistant-replies', (req, res, next) => conversationsController.runAdminConciergeTurn(req, res, next));

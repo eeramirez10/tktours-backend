@@ -4,6 +4,7 @@ import { ZodError } from 'zod';
 import { NotFoundAppError, ValidationAppError } from '../../../../../shared/domain/errors/app-error.js';
 import { CreateConversationUseCase } from '../../../application/use-cases/create-conversation.use-case.js';
 import { CreateMessageUseCase } from '../../../application/use-cases/create-message.use-case.js';
+import { RunAdminConciergeTurnUseCase } from '../../../application/use-cases/run-admin-concierge-turn.use-case.js';
 import { GetConversationByIdUseCase } from '../../../application/use-cases/get-conversation-by-id.use-case.js';
 import { GetConversationsHealthUseCase } from '../../../application/use-cases/get-conversations-health.use-case.js';
 import { ListConversationsUseCase } from '../../../application/use-cases/list-conversations.use-case.js';
@@ -13,6 +14,7 @@ import { conversationIdParamsSchema } from '../schemas/conversation-params.schem
 import { listConversationsQuerySchema } from '../schemas/conversation-query.schemas.js';
 import { createConversationBodySchema } from '../schemas/create-conversation.schemas.js';
 import { createMessageBodySchema, updateConversationBodySchema } from '../schemas/update-conversation.schemas.js';
+import { runAdminConciergeTurnBodySchema } from '../schemas/run-admin-concierge-turn.schemas.js';
 
 const conversationRepository = new PrismaConversationRepository();
 const getConversationsHealthUseCase = new GetConversationsHealthUseCase();
@@ -21,6 +23,7 @@ const getConversationByIdUseCase = new GetConversationByIdUseCase(conversationRe
 const createConversationUseCase = new CreateConversationUseCase(conversationRepository);
 const updateConversationUseCase = new UpdateConversationUseCase(conversationRepository);
 const createMessageUseCase = new CreateMessageUseCase(conversationRepository);
+const runAdminConciergeTurnUseCase = new RunAdminConciergeTurnUseCase(conversationRepository);
 
 function toValidationError(error: ZodError, message: string) {
   return new ValidationAppError(message, error.flatten());
@@ -83,6 +86,24 @@ export class ConversationsController {
       return res.status(201).json({ ok: true, data });
     } catch (error) {
       return next(error instanceof ZodError ? toValidationError(error, 'Invalid create message body') : error);
+    }
+  }
+
+  async runAdminConciergeTurn(req: Request, res: Response, next: NextFunction) {
+    try {
+      const { conversationId } = conversationIdParamsSchema.parse(req.params);
+      const body = runAdminConciergeTurnBodySchema.parse(req.body);
+      if (!req.admin) {
+        return next(new ValidationAppError('Authenticated admin is required'));
+      }
+      const data = await runAdminConciergeTurnUseCase.execute({
+        conversationId,
+        text: body.text,
+        admin: req.admin,
+      });
+      return res.status(201).json({ ok: true, data });
+    } catch (error) {
+      return next(error instanceof ZodError ? toValidationError(error, 'Invalid admin concierge message') : error);
     }
   }
 }
