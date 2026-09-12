@@ -425,12 +425,14 @@ model Message {
   providerMessageId    String?          @unique
   metadata             Json?
   readByAdminAt        DateTime?
+  notificationSeenAt   DateTime?
   conversation         Conversation     @relation(fields: [conversationId], references: [id], onDelete: Cascade)
   conciergeTurnInputs  ConciergeTurn[]  @relation("ConciergeTurnIncomingMessage")
   createdAt            DateTime         @default(now())
 
   @@index([conversationId, createdAt])
   @@index([direction, readByAdminAt])
+  @@index([direction, notificationSeenAt])
 }
 
 model Inquiry {

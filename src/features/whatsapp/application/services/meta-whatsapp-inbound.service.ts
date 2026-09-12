@@ -112,13 +112,8 @@ export class MetaWhatsAppInboundService {
     const waId = normalizeWhatsAppPhoneNumber(params.from);
     const contact = await prisma.contact.upsert({
       where: { waId },
-      update: {
-        ...(params.profileName ? { firstName: params.profileName } : {}),
-      },
-      create: {
-        waId,
-        firstName: params.profileName,
-      },
+      update: {},
+      create: { waId },
       select: { id: true },
     });
 
@@ -130,6 +125,7 @@ export class MetaWhatsAppInboundService {
       metadata: {
         source: 'meta-whatsapp-webhook',
         rawFrom: params.from,
+        profileName: params.profileName,
         messageType: params.messageType,
         phoneNumberId: params.phoneNumberId,
       },

@@ -15,13 +15,20 @@ export class MarkConversationReadUseCase {
       throw new NotFoundAppError('Conversation not found');
     }
 
+    const readAt = new Date();
     const result = await prisma.message.updateMany({
       where: {
         conversationId,
         direction: 'INBOUND',
-        readByAdminAt: null,
+        OR: [
+          { readByAdminAt: null },
+          { notificationSeenAt: null },
+        ],
       },
-      data: { readByAdminAt: new Date() },
+      data: {
+        readByAdminAt: readAt,
+        notificationSeenAt: readAt,
+      },
     });
 
     if (result.count > 0) {

@@ -15,6 +15,7 @@ type ConversationRealtimeEventType =
   | 'conversation.updated'
   | 'conversation.control.changed'
   | 'conversation.read.changed'
+  | 'conversation.notifications.seen'
   | 'concierge.processing'
   | 'concierge.replied'
   | 'concierge.failed';

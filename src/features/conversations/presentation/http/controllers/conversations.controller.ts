@@ -11,6 +11,7 @@ import { GetConversationByIdUseCase } from '../../../application/use-cases/get-c
 import { GetConversationsHealthUseCase } from '../../../application/use-cases/get-conversations-health.use-case.js';
 import { ListConversationsUseCase } from '../../../application/use-cases/list-conversations.use-case.js';
 import { MarkConversationReadUseCase } from '../../../application/use-cases/mark-conversation-read.use-case.js';
+import { MarkNotificationsSeenUseCase } from '../../../application/use-cases/mark-notifications-seen.use-case.js';
 import { UpdateConversationUseCase } from '../../../application/use-cases/update-conversation.use-case.js';
 import { PrismaConversationRepository } from '../../../infrastructure/repositories/prisma-conversation.repository.js';
 import { conversationIdParamsSchema } from '../schemas/conversation-params.schemas.js';
@@ -31,6 +32,7 @@ const runAdminConciergeTurnUseCase = new RunAdminConciergeTurnUseCase(conversati
 const setConversationControlModeUseCase = new SetConversationControlModeUseCase(conversationRepository);
 const sendHumanConversationMessageUseCase = new SendHumanConversationMessageUseCase(conversationRepository);
 const markConversationReadUseCase = new MarkConversationReadUseCase(conversationRepository);
+const markNotificationsSeenUseCase = new MarkNotificationsSeenUseCase();
 
 function toValidationError(error: ZodError, message: string) {
   return new ValidationAppError(message, error.flatten());
@@ -153,6 +155,15 @@ export class ConversationsController {
       return res.json({ ok: true, data });
     } catch (error) {
       return next(error instanceof ZodError ? toValidationError(error, 'Invalid conversation id') : error);
+    }
+  }
+
+  async markNotificationsAsSeen(_req: Request, res: Response, next: NextFunction) {
+    try {
+      const data = await markNotificationsSeenUseCase.execute();
+      return res.json({ ok: true, data });
+    } catch (error) {
+      return next(error);
     }
   }
 }

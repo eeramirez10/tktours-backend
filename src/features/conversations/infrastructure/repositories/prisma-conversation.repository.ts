@@ -63,6 +63,7 @@ const conversationSelect = {
       providerMessageId: true,
       metadata: true,
       readByAdminAt: true,
+      notificationSeenAt: true,
       createdAt: true,
     },
   },
@@ -130,9 +131,11 @@ function mapConversation(record: ConversationRecord): ConversationDetail {
       providerMessageId: item.providerMessageId,
       metadata: (item.metadata as Record<string, unknown> | null) ?? null,
       readByAdminAt: item.readByAdminAt,
+      notificationSeenAt: item.notificationSeenAt,
       createdAt: item.createdAt,
     })),
     unreadMessagesCount: record.messages.filter((item) => item.direction === 'INBOUND' && !item.readByAdminAt).length,
+    unseenNotificationsCount: record.messages.filter((item) => item.direction === 'INBOUND' && !item.notificationSeenAt).length,
     latestMessage: record.messages.length > 0
       ? {
           ...record.messages[record.messages.length - 1],
@@ -165,6 +168,7 @@ function mapListItem(record: ConversationRecord): ConversationListItem {
     inquiriesCount: detail.inquiriesCount,
     messagesCount: detail.messagesCount,
     unreadMessagesCount: detail.unreadMessagesCount,
+    unseenNotificationsCount: detail.unseenNotificationsCount,
     latestMessage: detail.latestMessage,
     latestUnreadMessage: detail.latestUnreadMessage,
     createdAt: detail.createdAt,

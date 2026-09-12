@@ -96,6 +96,7 @@ export type ConversationMessageItem = {
   providerMessageId: string | null;
   metadata: Record<string, unknown> | null;
   readByAdminAt: Date | null;
+  notificationSeenAt: Date | null;
   createdAt: Date;
 };
 
@@ -112,6 +113,7 @@ export type ConversationListItem = {
   inquiriesCount: number;
   messagesCount: number;
   unreadMessagesCount: number;
+  unseenNotificationsCount: number;
   latestMessage: ConversationMessageItem | null;
   latestUnreadMessage: ConversationMessageItem | null;
   createdAt: Date;
