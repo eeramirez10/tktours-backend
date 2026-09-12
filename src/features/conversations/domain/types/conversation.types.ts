@@ -95,6 +95,7 @@ export type ConversationMessageItem = {
   mediaUrl: string | null;
   providerMessageId: string | null;
   metadata: Record<string, unknown> | null;
+  readByAdminAt: Date | null;
   createdAt: Date;
 };
 
@@ -110,6 +111,9 @@ export type ConversationListItem = {
   contact: ConversationContactSummary | null;
   inquiriesCount: number;
   messagesCount: number;
+  unreadMessagesCount: number;
+  latestMessage: ConversationMessageItem | null;
+  latestUnreadMessage: ConversationMessageItem | null;
   createdAt: Date;
   updatedAt: Date;
 };

@@ -62,6 +62,7 @@ const conversationSelect = {
       mediaUrl: true,
       providerMessageId: true,
       metadata: true,
+      readByAdminAt: true,
       createdAt: true,
     },
   },
@@ -81,6 +82,10 @@ function toNullableJsonInput(value: Record<string, unknown> | null | undefined):
 }
 
 function mapConversation(record: ConversationRecord): ConversationDetail {
+  const latestUnreadMessage = [...record.messages]
+    .reverse()
+    .find((item) => item.direction === 'INBOUND' && !item.readByAdminAt) ?? null;
+
   return {
     id: record.id,
     channel: record.channel,
@@ -124,8 +129,22 @@ function mapConversation(record: ConversationRecord): ConversationDetail {
       mediaUrl: item.mediaUrl,
       providerMessageId: item.providerMessageId,
       metadata: (item.metadata as Record<string, unknown> | null) ?? null,
+      readByAdminAt: item.readByAdminAt,
       createdAt: item.createdAt,
     })),
+    unreadMessagesCount: record.messages.filter((item) => item.direction === 'INBOUND' && !item.readByAdminAt).length,
+    latestMessage: record.messages.length > 0
+      ? {
+          ...record.messages[record.messages.length - 1],
+          metadata: (record.messages[record.messages.length - 1].metadata as Record<string, unknown> | null) ?? null,
+      }
+      : null,
+    latestUnreadMessage: latestUnreadMessage
+      ? {
+          ...latestUnreadMessage,
+          metadata: (latestUnreadMessage.metadata as Record<string, unknown> | null) ?? null,
+        }
+      : null,
     createdAt: record.createdAt,
     updatedAt: record.updatedAt,
   };
@@ -145,6 +164,9 @@ function mapListItem(record: ConversationRecord): ConversationListItem {
     contact: detail.contact,
     inquiriesCount: detail.inquiriesCount,
     messagesCount: detail.messagesCount,
+    unreadMessagesCount: detail.unreadMessagesCount,
+    latestMessage: detail.latestMessage,
+    latestUnreadMessage: detail.latestUnreadMessage,
     createdAt: detail.createdAt,
     updatedAt: detail.updatedAt,
   };

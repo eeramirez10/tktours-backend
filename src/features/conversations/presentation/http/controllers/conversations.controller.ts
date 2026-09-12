@@ -10,6 +10,7 @@ import { SetConversationControlModeUseCase } from '../../../application/use-case
 import { GetConversationByIdUseCase } from '../../../application/use-cases/get-conversation-by-id.use-case.js';
 import { GetConversationsHealthUseCase } from '../../../application/use-cases/get-conversations-health.use-case.js';
 import { ListConversationsUseCase } from '../../../application/use-cases/list-conversations.use-case.js';
+import { MarkConversationReadUseCase } from '../../../application/use-cases/mark-conversation-read.use-case.js';
 import { UpdateConversationUseCase } from '../../../application/use-cases/update-conversation.use-case.js';
 import { PrismaConversationRepository } from '../../../infrastructure/repositories/prisma-conversation.repository.js';
 import { conversationIdParamsSchema } from '../schemas/conversation-params.schemas.js';
@@ -29,6 +30,7 @@ const createMessageUseCase = new CreateMessageUseCase(conversationRepository);
 const runAdminConciergeTurnUseCase = new RunAdminConciergeTurnUseCase(conversationRepository);
 const setConversationControlModeUseCase = new SetConversationControlModeUseCase(conversationRepository);
 const sendHumanConversationMessageUseCase = new SendHumanConversationMessageUseCase(conversationRepository);
+const markConversationReadUseCase = new MarkConversationReadUseCase(conversationRepository);
 
 function toValidationError(error: ZodError, message: string) {
   return new ValidationAppError(message, error.flatten());
@@ -141,6 +143,16 @@ export class ConversationsController {
       return res.status(201).json({ ok: true, data });
     } catch (error) {
       return next(error instanceof ZodError ? toValidationError(error, 'Invalid human conversation message') : error);
+    }
+  }
+
+  async markAsRead(req: Request, res: Response, next: NextFunction) {
+    try {
+      const { conversationId } = conversationIdParamsSchema.parse(req.params);
+      const data = await markConversationReadUseCase.execute(conversationId);
+      return res.json({ ok: true, data });
+    } catch (error) {
+      return next(error instanceof ZodError ? toValidationError(error, 'Invalid conversation id') : error);
     }
   }
 }
