@@ -16,6 +16,7 @@ const conversationSelect = {
   id: true,
   channel: true,
   status: true,
+  controlMode: true,
   currentStage: true,
   contextJson: true,
   lastMessageAt: true,
@@ -68,6 +69,7 @@ const conversationSelect = {
     select: {
       inquiries: true,
       messages: true,
+      conciergeTurns: { where: { status: 'STARTED' } },
     },
   },
 } satisfies Prisma.ConversationSelect;
@@ -83,6 +85,8 @@ function mapConversation(record: ConversationRecord): ConversationDetail {
     id: record.id,
     channel: record.channel,
     status: record.status,
+    controlMode: record.controlMode,
+    isConciergeProcessing: record._count.conciergeTurns > 0,
     currentStage: record.currentStage,
     lastMessageAt: record.lastMessageAt,
     contextJson: (record.contextJson as Record<string, unknown> | null) ?? null,
@@ -133,6 +137,8 @@ function mapListItem(record: ConversationRecord): ConversationListItem {
     id: detail.id,
     channel: detail.channel,
     status: detail.status,
+    controlMode: detail.controlMode,
+    isConciergeProcessing: detail.isConciergeProcessing,
     currentStage: detail.currentStage,
     lastMessageAt: detail.lastMessageAt,
     contextJson: detail.contextJson,

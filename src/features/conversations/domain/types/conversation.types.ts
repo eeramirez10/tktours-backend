@@ -2,6 +2,8 @@ export type ConversationChannel = 'WHATSAPP' | 'WEB' | 'EMAIL';
 
 export type ConversationStatusKey = 'OPEN' | 'PAUSED' | 'CLOSED' | 'ARCHIVED';
 
+export type ConversationControlModeKey = 'AI' | 'HUMAN';
+
 export type ConversationStageKey =
   | 'START'
   | 'QUALIFY_AGE'
@@ -42,6 +44,11 @@ export type UpdateConversationInput = {
   currentStage?: ConversationStageKey;
   contextJson?: Record<string, unknown> | null;
   lastMessageAt?: string | null;
+};
+
+export type SetConversationControlModeInput = {
+  conversationId: string;
+  controlMode: ConversationControlModeKey;
 };
 
 export type CreateMessageInput = {
@@ -95,6 +102,8 @@ export type ConversationListItem = {
   id: string;
   channel: ConversationChannel;
   status: ConversationStatusKey;
+  controlMode: ConversationControlModeKey;
+  isConciergeProcessing: boolean;
   currentStage: ConversationStageKey;
   lastMessageAt: Date | null;
   contextJson: Record<string, unknown> | null;

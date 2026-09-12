@@ -76,6 +76,11 @@ enum ConversationStatus {
   ARCHIVED
 }
 
+enum ConversationControlMode {
+  AI
+  HUMAN
+}
+
 enum ConversationStage {
   START
   QUALIFY_AGE
@@ -397,6 +402,7 @@ model Conversation {
   contactId      String? @db.Uuid
   channel        Channel            @default(WHATSAPP)
   status         ConversationStatus @default(OPEN)
+  controlMode    ConversationControlMode @default(AI)
   currentStage   ConversationStage  @default(START)
   contextJson    Json?
   lastMessageAt  DateTime?

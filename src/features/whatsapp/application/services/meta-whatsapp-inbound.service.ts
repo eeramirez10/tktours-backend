@@ -3,10 +3,9 @@ import { z } from 'zod';
 
 import { conversationRealtimeHub } from '../../../conversations/infrastructure/realtime/conversation-realtime-hub.js';
 import { ConciergeOrchestratorService } from '../../../concierge/application/services/concierge-orchestrator.service.js';
-import { env } from '../../../../shared/config/env.js';
 import { logger } from '../../../../shared/config/logger.js';
-import { ValidationAppError } from '../../../../shared/domain/errors/app-error.js';
 import { prisma } from '../../../../shared/infrastructure/database/prisma.js';
+import { MetaWhatsAppClient, normalizeWhatsAppPhoneNumber } from '../../infrastructure/clients/meta-whatsapp.client.js';
 import type { MetaWhatsAppWebhookBody } from '../../presentation/http/schemas/meta-whatsapp-webhook.schemas.js';
 import { WhatsappConversationThreadService } from './whatsapp-conversation-thread.service.js';
 import { MetaWhatsAppStatusService } from './meta-whatsapp-status.service.js';
@@ -49,28 +48,12 @@ function toNullableJsonInput(value: Record<string, unknown> | null): Prisma.Inpu
   return value == null ? Prisma.JsonNull : (value as Prisma.InputJsonValue);
 }
 
-function normalizePhoneNumber(value: string): string {
-  const normalized = value.replace(/\D/g, '');
-  if (normalized.length < 8 || normalized.length > 15) {
-    throw new ValidationAppError('Invalid WhatsApp phone number');
-  }
-  return normalized;
-}
-
-function getDocumentFilename(url: string): string | undefined {
-  try {
-    const filename = new URL(url).pathname.split('/').pop()?.trim();
-    return filename && filename.length > 0 ? filename : undefined;
-  } catch {
-    return undefined;
-  }
-}
-
 export class MetaWhatsAppInboundService {
   constructor(
     private readonly concierge = new ConciergeOrchestratorService(),
     private readonly threadService = new WhatsappConversationThreadService(),
     private readonly statusService = new MetaWhatsAppStatusService(),
+    private readonly whatsAppClient = new MetaWhatsAppClient(),
   ) {}
 
   async processWebhook(payload: MetaWhatsAppWebhookBody): Promise<void> {
@@ -126,7 +109,7 @@ export class MetaWhatsAppInboundService {
     messageType: string;
     phoneNumberId: string;
   }): Promise<void> {
-    const waId = normalizePhoneNumber(params.from);
+    const waId = normalizeWhatsAppPhoneNumber(params.from);
     const contact = await prisma.contact.upsert({
       where: { waId },
       update: {
@@ -169,6 +152,16 @@ export class MetaWhatsAppInboundService {
       conversationId: conversation.id,
       messageId: inboundMessage.id,
     });
+
+    if (conversation.controlMode === 'HUMAN') {
+      conversationRealtimeHub.publish({
+        type: 'conversation.updated',
+        conversationId: conversation.id,
+        messageId: inboundMessage.id,
+      });
+      return;
+    }
+
     conversationRealtimeHub.publish({
       type: 'concierge.processing',
       conversationId: conversation.id,
@@ -204,12 +197,12 @@ export class MetaWhatsAppInboundService {
       return;
     }
 
-    const textResult = await this.sendWhatsAppMessage({ to: waId, body: replyText });
+    const textResult = await this.whatsAppClient.sendMessage({ to: waId, body: replyText });
     const mediaUrls = this.getOutboundMediaUrls(outboundMessage);
     const mediaResults = await Promise.all(
       mediaUrls.map(async (mediaUrl) => {
         try {
-          return await this.sendWhatsAppMessage({ to: waId, mediaUrl });
+          return await this.whatsAppClient.sendMessage({ to: waId, mediaUrl });
         } catch (error) {
           logger.error({ error, mediaUrl, messageId: outboundMessage?.id }, 'meta whatsapp document request failed');
           return { messageId: null, status: 'FAILED_TO_REQUEST' };
@@ -299,62 +292,5 @@ export class MetaWhatsAppInboundService {
       }
       throw error;
     }
-  }
-
-  private async sendWhatsAppMessage(params: {
-    to: string;
-    body?: string;
-    mediaUrl?: string | null;
-  }): Promise<{ messageId: string | null; status: string }> {
-    const body = params.body?.trim();
-    const mediaUrl = params.mediaUrl?.trim();
-    if (!body && (!mediaUrl || !/^https?:\/\//i.test(mediaUrl))) {
-      throw new ValidationAppError('Meta WhatsApp message requires text or a public document URL');
-    }
-
-    const payload = mediaUrl
-      ? {
-          messaging_product: 'whatsapp',
-          recipient_type: 'individual',
-          to: normalizePhoneNumber(params.to),
-          type: 'document',
-          document: {
-            link: mediaUrl,
-            ...(getDocumentFilename(mediaUrl) ? { filename: getDocumentFilename(mediaUrl) } : {}),
-          },
-        }
-      : {
-          messaging_product: 'whatsapp',
-          recipient_type: 'individual',
-          to: normalizePhoneNumber(params.to),
-          type: 'text',
-          text: { preview_url: false, body },
-        };
-
-    const endpoint = `https://graph.facebook.com/${env.WHATSAPP_META_GRAPH_API_VERSION}/${env.WHATSAPP_META_PHONE_NUMBER_ID}/messages`;
-    const response = await fetch(endpoint, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${env.WHATSAPP_META_ACCESS_TOKEN}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(payload),
-    });
-    const json = (await response.json().catch(() => ({}))) as Record<string, unknown>;
-
-    if (!response.ok) {
-      logger.error({ status: response.status, body: json }, 'meta whatsapp outbound request failed');
-      throw new ValidationAppError('Meta WhatsApp outbound request failed', {
-        status: response.status,
-        response: json,
-      });
-    }
-
-    const messages = Array.isArray(json.messages) ? json.messages : [];
-    const firstMessage = messages[0] && typeof messages[0] === 'object' ? (messages[0] as Record<string, unknown>) : null;
-    return {
-      messageId: typeof firstMessage?.id === 'string' ? firstMessage.id : null,
-      status: 'ACCEPTED',
-    };
   }
 }

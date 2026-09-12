@@ -13,6 +13,7 @@ const tokenProtocolPrefix = 'auth.';
 type ConversationRealtimeEventType =
   | 'conversation.message.received'
   | 'conversation.updated'
+  | 'conversation.control.changed'
   | 'concierge.processing'
   | 'concierge.replied'
   | 'concierge.failed';

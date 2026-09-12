@@ -5,6 +5,7 @@ import { prisma } from '../../../../shared/infrastructure/database/prisma.js';
 const threadSelect = {
   id: true,
   status: true,
+  controlMode: true,
   currentStage: true,
   contextJson: true,
   lastMessageAt: true,
@@ -30,7 +31,7 @@ export type ConsolidateWhatsappThreadsResult = {
 };
 
 export class WhatsappConversationThreadService {
-  async getOrCreateThread(contactId: string): Promise<{ id: string }> {
+  async getOrCreateThread(contactId: string): Promise<{ id: string; controlMode: 'AI' | 'HUMAN' }> {
     const conversations = await this.findThreadsByContact(contactId);
 
     if (conversations.length === 0) {
@@ -44,7 +45,7 @@ export class WhatsappConversationThreadService {
             source: 'meta-whatsapp-webhook',
           },
         },
-        select: { id: true },
+        select: { id: true, controlMode: true },
       });
     }
 
@@ -66,7 +67,7 @@ export class WhatsappConversationThreadService {
 
     await this.reopenThreadIfNeeded(refreshed);
 
-    return { id: refreshed.id };
+    return { id: refreshed.id, controlMode: refreshed.controlMode };
   }
 
   async consolidateAllThreads(): Promise<ConsolidateWhatsappThreadsResult> {

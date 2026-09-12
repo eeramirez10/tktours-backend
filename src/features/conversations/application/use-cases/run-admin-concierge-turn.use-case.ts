@@ -1,7 +1,7 @@
 import { Prisma } from '@prisma/client';
 
 import { ConciergeOrchestratorService } from '../../../concierge/application/services/concierge-orchestrator.service.js';
-import { NotFoundAppError } from '../../../../shared/domain/errors/app-error.js';
+import { ConflictAppError, NotFoundAppError } from '../../../../shared/domain/errors/app-error.js';
 import { prisma } from '../../../../shared/infrastructure/database/prisma.js';
 import { conversationRealtimeHub } from '../../infrastructure/realtime/conversation-realtime-hub.js';
 import { PrismaConversationRepository } from '../../infrastructure/repositories/prisma-conversation.repository.js';
@@ -19,10 +19,13 @@ export class RunAdminConciergeTurnUseCase {
   async execute(input: { conversationId: string; text: string; admin: { id: string; email: string } }) {
     const conversation = await prisma.conversation.findUnique({
       where: { id: input.conversationId },
-      select: { id: true, contactId: true },
+      select: { id: true, contactId: true, controlMode: true },
     });
     if (!conversation) {
       throw new NotFoundAppError('Conversation not found');
+    }
+    if (conversation.controlMode !== 'AI') {
+      throw new ConflictAppError('The concierge is disabled while the conversation is under human control');
     }
 
     const inboundMessage = await prisma.$transaction(async (tx) => {

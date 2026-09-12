@@ -1,4 +1,4 @@
-import { NotFoundAppError, ValidationAppError } from '../../../../shared/domain/errors/app-error.js';
+import { ConflictAppError, NotFoundAppError, ValidationAppError } from '../../../../shared/domain/errors/app-error.js';
 import { env } from '../../../../shared/config/env.js';
 import { prisma } from '../../../../shared/infrastructure/database/prisma.js';
 import { PrismaConversationRepository } from '../../../conversations/infrastructure/repositories/prisma-conversation.repository.js';
@@ -75,11 +75,23 @@ export class ConciergeOrchestratorService {
       throw new NotFoundAppError('Latest message not found');
     }
 
+    if (context.conversation?.controlMode !== 'AI') {
+      throw new ConflictAppError('The concierge is disabled while the conversation is under human control');
+    }
+
     if (context.latestMessage.id !== params.incomingMessageId) {
       throw new NotFoundAppError('Incoming message does not belong to the conversation');
     }
 
     context = await this.hydrateInquiryFromLatestMessage(context);
+
+    const currentControlState = await prisma.conversation.findUnique({
+      where: { id: params.conversationId },
+      select: { controlMode: true },
+    });
+    if (currentControlState?.controlMode !== 'AI') {
+      throw new ConflictAppError('The concierge is disabled while the conversation is under human control');
+    }
 
     const inputPayload = this.buildModelInputPayload(context);
     const input = this.renderModelInput(inputPayload);
