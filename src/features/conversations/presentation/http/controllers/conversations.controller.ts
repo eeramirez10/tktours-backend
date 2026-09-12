@@ -4,6 +4,7 @@ import { ZodError } from 'zod';
 import { NotFoundAppError, ValidationAppError } from '../../../../../shared/domain/errors/app-error.js';
 import { CreateConversationUseCase } from '../../../application/use-cases/create-conversation.use-case.js';
 import { CreateMessageUseCase } from '../../../application/use-cases/create-message.use-case.js';
+import { DeleteConversationUseCase } from '../../../application/use-cases/delete-conversation.use-case.js';
 import { RunAdminConciergeTurnUseCase } from '../../../application/use-cases/run-admin-concierge-turn.use-case.js';
 import { SendHumanConversationMessageUseCase } from '../../../application/use-cases/send-human-conversation-message.use-case.js';
 import { SetConversationControlModeUseCase } from '../../../application/use-cases/set-conversation-control-mode.use-case.js';
@@ -28,6 +29,7 @@ const getConversationByIdUseCase = new GetConversationByIdUseCase(conversationRe
 const createConversationUseCase = new CreateConversationUseCase(conversationRepository);
 const updateConversationUseCase = new UpdateConversationUseCase(conversationRepository);
 const createMessageUseCase = new CreateMessageUseCase(conversationRepository);
+const deleteConversationUseCase = new DeleteConversationUseCase();
 const runAdminConciergeTurnUseCase = new RunAdminConciergeTurnUseCase(conversationRepository);
 const setConversationControlModeUseCase = new SetConversationControlModeUseCase(conversationRepository);
 const sendHumanConversationMessageUseCase = new SendHumanConversationMessageUseCase(conversationRepository);
@@ -84,6 +86,16 @@ export class ConversationsController {
       return res.json({ ok: true, data });
     } catch (error) {
       return next(error instanceof ZodError ? toValidationError(error, 'Invalid update conversation body') : error);
+    }
+  }
+
+  async deleteConversation(req: Request, res: Response, next: NextFunction) {
+    try {
+      const { conversationId } = conversationIdParamsSchema.parse(req.params);
+      const data = await deleteConversationUseCase.execute(conversationId);
+      return res.json({ ok: true, data });
+    } catch (error) {
+      return next(error instanceof ZodError ? toValidationError(error, 'Invalid conversation id') : error);
     }
   }
 

@@ -10,6 +10,7 @@ conversationsRoutes.get('/conversations', (req, res, next) => conversationsContr
 conversationsRoutes.get('/conversations/:conversationId', (req, res, next) => conversationsController.getConversationById(req, res, next));
 conversationsRoutes.post('/conversations', (req, res, next) => conversationsController.createConversation(req, res, next));
 conversationsRoutes.patch('/conversations/:conversationId', (req, res, next) => conversationsController.updateConversation(req, res, next));
+conversationsRoutes.delete('/conversations/:conversationId', (req, res, next) => conversationsController.deleteConversation(req, res, next));
 conversationsRoutes.post('/conversations/:conversationId/messages', (req, res, next) => conversationsController.createMessage(req, res, next));
 conversationsRoutes.post('/conversations/:conversationId/assistant-replies', (req, res, next) => conversationsController.runAdminConciergeTurn(req, res, next));
 conversationsRoutes.patch('/conversations/:conversationId/control-mode', (req, res, next) => conversationsController.setControlMode(req, res, next));
