@@ -1,5 +1,8 @@
+import { access } from 'node:fs/promises';
+
 import { CatalogRepository } from '../../../catalog/infrastructure/repositories/catalog.repository.js';
 import { PrismaInquiryRepository } from '../../../inquiries/infrastructure/repositories/prisma-inquiry.repository.js';
+import { LocalResourceStorageService } from '../../../resources/infrastructure/storage/local-resource-storage.service.js';
 import { prisma } from '../../../../shared/infrastructure/database/prisma.js';
 import { OpenAiResponsesClient } from '../../infrastructure/clients/openai-response.js';
 import {
@@ -94,6 +97,7 @@ export class ConciergeToolExecutorService {
     private readonly catalogRepository = new CatalogRepository(),
     private readonly inquiryRepository = new PrismaInquiryRepository(),
     private readonly responsesClient = new OpenAiResponsesClient({}),
+    private readonly resourceStorage = new LocalResourceStorageService(),
   ) {}
 
   async execute(toolName: string, args: unknown) {
@@ -526,6 +530,16 @@ export class ConciergeToolExecutorService {
         ...(args.locationSlug ? { location: { slug: args.locationSlug } } : {}),
         ...(args.programSlug ? { program: { slug: args.programSlug } } : {}),
         ...(args.type ? { type: args.type } : {}),
+        versions: {
+          some: {
+            isCurrent: true,
+            OR: [
+              { sourceType: 'UPLOAD', storageKey: { not: null } },
+              { sourceType: 'EXTERNAL_LINK', fileUrl: { startsWith: 'https://' } },
+              { sourceType: 'EXTERNAL_LINK', fileUrl: { startsWith: 'http://' } },
+            ],
+          },
+        },
       },
       orderBy: [{ year: 'desc' }, { month: 'desc' }, { title: 'asc' }],
       select: {
@@ -549,7 +563,14 @@ export class ConciergeToolExecutorService {
           },
         },
         versions: {
-          where: { isCurrent: true },
+          where: {
+            isCurrent: true,
+            OR: [
+              { sourceType: 'UPLOAD', storageKey: { not: null } },
+              { sourceType: 'EXTERNAL_LINK', fileUrl: { startsWith: 'https://' } },
+              { sourceType: 'EXTERNAL_LINK', fileUrl: { startsWith: 'http://' } },
+            ],
+          },
           take: 1,
           orderBy: { versionNumber: 'desc' },
           select: {
@@ -557,6 +578,8 @@ export class ConciergeToolExecutorService {
             fileName: true,
             fileUrl: true,
             mimeType: true,
+            sourceType: true,
+            storageKey: true,
             extraction: {
               select: {
                 status: true,
@@ -568,8 +591,30 @@ export class ConciergeToolExecutorService {
       },
     });
 
+    const deliverableResources = (
+      await Promise.all(
+        resources.map(async (resource) => {
+          const version = resource.versions[0];
+          if (!version) return null;
+
+          if (version.sourceType === 'EXTERNAL_LINK') {
+            return this.isHttpUrl(version.fileUrl) ? resource : null;
+          }
+
+          if (!version.storageKey) return null;
+
+          try {
+            await access(this.resourceStorage.getAbsolutePath(version.storageKey));
+            return resource;
+          } catch {
+            return null;
+          }
+        }),
+      )
+    ).filter((resource): resource is (typeof resources)[number] => resource !== null);
+
     return {
-      resources: resources.map((resource) => ({
+      resources: deliverableResources.map((resource) => ({
         id: resource.id,
         title: resource.title,
         type: resource.type,
@@ -600,6 +645,15 @@ export class ConciergeToolExecutorService {
           : null,
       })),
     };
+  }
+
+  private isHttpUrl(value: string): boolean {
+    try {
+      const url = new URL(value);
+      return url.protocol === 'http:' || url.protocol === 'https:';
+    } catch {
+      return false;
+    }
   }
 
   private async listAvailableAccommodations(args: ListAvailableAccommodationsArgs) {

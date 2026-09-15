@@ -47,6 +47,12 @@ async function main() {
       errors: [{ code: 131026, title: 'Message undeliverable' }],
     });
 
+    await service.processStatusCallback({
+      id: message.providerMessageId!,
+      status: 'read',
+      timestamp: String(Math.floor(Date.now() / 1000)),
+    });
+
     const stored = await prisma.message.findUniqueOrThrow({
       where: { id: message.id },
       select: { metadata: true },
@@ -54,9 +60,9 @@ async function main() {
 
     const metadata = (stored.metadata as Record<string, unknown> | null) ?? {};
     const mediaStatuses = Array.isArray(metadata.metaMediaStatuses) ? metadata.metaMediaStatuses : [];
-    assert.equal(metadata.metaStatus, 'delivered');
+    assert.equal(metadata.metaStatus, 'read');
     assert.equal(mediaStatuses[1], 'failed');
-    assert.deepEqual(metadata.metaErrors, [{ code: 131026, title: 'Message undeliverable' }]);
+    assert.deepEqual(metadata.metaMediaErrors, [{ code: 131026, title: 'Message undeliverable' }]);
 
     console.log('OK: Meta WhatsApp status callback test passed');
     console.log(`conversationId=${conversation.id}`);

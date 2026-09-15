@@ -37,7 +37,7 @@ export class MetaWhatsAppStatusService {
             metaStatusCallbackAt: new Date().toISOString(),
             metaStatus: payload.status,
             metaRecipientId: payload.recipientId ?? null,
-            metaErrors: payload.errors ?? [],
+            ...(payload.errors ? { metaErrors: payload.errors } : {}),
           }),
         },
       });
@@ -79,7 +79,7 @@ export class MetaWhatsAppStatusService {
           metaMediaStatus: matchIndex === 0 ? payload.status : metadata.metaMediaStatus ?? null,
           metaMediaStatuses: mediaStatuses,
           metaRecipientId: payload.recipientId ?? null,
-          metaErrors: payload.errors ?? [],
+          ...(payload.errors ? { metaMediaErrors: payload.errors } : {}),
         }),
       },
     });
