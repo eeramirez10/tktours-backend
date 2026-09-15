@@ -527,7 +527,7 @@ export class ConciergeToolExecutorService {
         ...((args.activeOnly ?? true) ? { active: true } : {}),
         ...(args.countryCode ? { country: { code: args.countryCode } } : {}),
         ...(args.familyKey ? { family: { key: args.familyKey } } : {}),
-        ...(args.locationSlug ? { location: { slug: args.locationSlug } } : {}),
+        ...(args.locationSlug ? { locationAssignments: { some: { location: { slug: args.locationSlug } } } } : {}),
         ...(args.programSlug ? { program: { slug: args.programSlug } } : {}),
         ...(args.type ? { type: args.type } : {}),
         versions: {
@@ -552,6 +552,10 @@ export class ConciergeToolExecutorService {
         country: { select: { code: true, name: true } },
         family: { select: { key: true, name: true } },
         location: { select: { slug: true, name: true, venueName: true } },
+        locationAssignments: {
+          orderBy: { location: { name: 'asc' } },
+          select: { location: { select: { slug: true, name: true, venueName: true } } },
+        },
         program: {
           select: {
             slug: true,
@@ -625,9 +629,11 @@ export class ConciergeToolExecutorService {
         countryName: this.toSpanishCountryName(resource.country.code, resource.country.name),
         familyKey: resource.family?.key ?? null,
         familyName: resource.family?.name ?? null,
-        locationSlug: resource.location?.slug ?? null,
-        locationName: resource.location?.name ?? null,
-        venueName: resource.location?.venueName ?? null,
+        locationSlug: resource.location?.slug ?? resource.locationAssignments[0]?.location.slug ?? null,
+        locationName: resource.locationAssignments.map((assignment) => assignment.location.name).join(', ') || (resource.location?.name ?? null),
+        locationSlugs: resource.locationAssignments.map((assignment) => assignment.location.slug),
+        locationNames: resource.locationAssignments.map((assignment) => assignment.location.name),
+        venueName: resource.location?.venueName ?? resource.locationAssignments[0]?.location.venueName ?? null,
         programSlug: resource.program?.slug ?? null,
         programName: resource.program?.name ?? null,
         programSeasonKeys: Array.from(

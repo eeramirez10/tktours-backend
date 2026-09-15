@@ -57,12 +57,16 @@ const optionalWeekOptionsSchema = z.preprocess((value) => {
 }, z.array(z.number().int().min(1).max(104)).max(52).optional())
   .transform((value) => (value ? Array.from(new Set(value)).sort((a, b) => a - b) : undefined));
 
+const optionalLocationSlugsSchema = z.array(z.string().trim().min(1)).max(100).optional()
+  .transform((value) => value ? Array.from(new Set(value)) : undefined);
+
 export const updateResourceBodySchema = z
   .object({
     countryCode: optionalTrimmedStringSchema,
     familyKey: z.enum(FAMILY_KEYS).optional(),
     programSlug: nullableTrimmedStringSchema,
     locationSlug: nullableTrimmedStringSchema,
+    locationSlugs: optionalLocationSlugsSchema,
     type: z.enum(RESOURCE_TYPES).optional(),
     title: optionalTrimmedStringSchema,
     description: nullableTrimmedStringSchema,
@@ -94,6 +98,7 @@ export const updateResourceBodySchema = z
     title: value.title?.trim(),
     programSlug: value.programSlug ?? undefined,
     locationSlug: value.locationSlug ?? undefined,
+    locationSlugs: value.locationSlugs,
   }));
 
 export const setResourceActiveBodySchema = z.object({

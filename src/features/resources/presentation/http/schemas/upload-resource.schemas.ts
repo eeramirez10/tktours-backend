@@ -86,12 +86,28 @@ const optionalWeekOptionsSchema = z.preprocess((value) => {
 }, z.array(z.number().int().min(1).max(104)).max(52).optional())
   .transform((value) => (value ? Array.from(new Set(value)).sort((a, b) => a - b) : undefined));
 
+const optionalLocationSlugsSchema = z.preprocess((value) => {
+  if (value === undefined || value === null || value === '') return undefined;
+  if (Array.isArray(value)) return value;
+  if (typeof value === 'string') {
+    try {
+      const parsed = JSON.parse(value);
+      if (Array.isArray(parsed)) return parsed;
+    } catch {
+      return value.split(',');
+    }
+  }
+  return value;
+}, z.array(z.string().trim().min(1)).max(100).optional())
+  .transform((value) => value ? Array.from(new Set(value.map((item) => item.trim()).filter(Boolean))) : undefined);
+
 export const uploadResourceBodySchema = z
   .object({
     countryCode: z.string().trim().min(2).max(3),
     familyKey: z.enum(FAMILY_KEYS).optional(),
     programSlug: optionalTrimmedStringSchema,
     locationSlug: optionalTrimmedStringSchema,
+    locationSlugs: optionalLocationSlugsSchema,
     locationName: optionalTrimmedStringSchema,
     locationVenueName: optionalNullableTrimmedStringSchema,
     locationDescription: optionalNullableTrimmedStringSchema,
@@ -119,6 +135,7 @@ export const uploadResourceBodySchema = z
     familyKey: value.familyKey,
     programSlug: value.programSlug,
     locationSlug: value.locationSlug,
+    locationSlugs: value.locationSlugs,
     locationName: value.locationName,
     locationVenueName: value.locationVenueName ?? null,
     locationDescription: value.locationDescription ?? null,

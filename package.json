@@ -9,6 +9,7 @@
     "build": "tsc -p tsconfig.json",
     "start": "NODE_ENV=production node dist/src/index.js",
     "test:memory-chain": "tsx src/scripts/testConciergeMemoryChain.ts",
+    "test:resource-locations": "NODE_ENV=development node --env-file=.env.development --import tsx src/scripts/testResourceMultipleLocations.ts",
     "test:camp-season-flow": "tsx src/scripts/testCampBrochureSeasonFlow.ts",
     "test:env-config": "tsx src/scripts/testEnvironmentConfig.ts",
     "test:meta-whatsapp-status": "tsx src/scripts/testMetaWhatsAppStatusCallback.ts",

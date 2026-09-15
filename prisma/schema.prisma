@@ -209,6 +209,7 @@ model ProgramLocation {
   country     Country    @relation(fields: [countryId], references: [id])
   programs    Program[]
   resources   Resource[]
+  resourceAssignments ResourceLocationAssignment[]
   inquiries   Inquiry[]
   createdAt   DateTime   @default(now())
   updatedAt   DateTime   @updatedAt
@@ -314,6 +315,7 @@ model Resource {
   family          ProductFamily?         @relation(fields: [familyId], references: [id])
   program         Program?               @relation(fields: [programId], references: [id])
   location        ProgramLocation?       @relation(fields: [locationId], references: [id])
+  locationAssignments ResourceLocationAssignment[]
   createdBy       AdminUser?             @relation("ResourceCreatedBy", fields: [createdById], references: [id])
   updatedBy       AdminUser?             @relation("ResourceUpdatedBy", fields: [updatedById], references: [id])
   versions        ResourceVersion[]
@@ -327,6 +329,17 @@ model Resource {
   @@index([programId])
   @@index([locationId])
   @@index([month, year])
+}
+
+model ResourceLocationAssignment {
+  resourceId String @db.Uuid
+  locationId String @db.Uuid
+  resource   Resource @relation(fields: [resourceId], references: [id], onDelete: Cascade)
+  location   ProgramLocation @relation(fields: [locationId], references: [id], onDelete: Cascade)
+  createdAt  DateTime @default(now())
+
+  @@id([resourceId, locationId])
+  @@index([locationId])
 }
 
 model ResourceVersion {

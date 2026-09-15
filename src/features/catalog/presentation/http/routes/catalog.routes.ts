@@ -4,6 +4,9 @@ import { catalogController } from '../controllers/catalog.controller.js';
 
 export const catalogRoutes = Router();
 
+catalogRoutes.get('/catalog/reference/countries', (req, res, next) => catalogController.listReferenceCountries(req, res, next));
+catalogRoutes.get('/catalog/reference/cities', (req, res, next) => catalogController.listReferenceCities(req, res, next));
+
 catalogRoutes.get('/catalog/health', (req, res) => catalogController.getHealth(req, res));
 catalogRoutes.get('/catalog/countries', (req, res, next) => catalogController.listCountries(req, res, next));
 catalogRoutes.post('/catalog/countries', (req, res, next) => catalogController.createCountry(req, res, next));

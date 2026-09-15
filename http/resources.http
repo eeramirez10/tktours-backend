@@ -90,13 +90,9 @@ Content-Disposition: form-data; name="description"
 
 Folleto del campamento en Milán, Italia.
 ------TKToursBoundary
-Content-Disposition: form-data; name="locationName"
+Content-Disposition: form-data; name="locationSlugs"
 
-Milán
-------TKToursBoundary
-Content-Disposition: form-data; name="locationVenueName"
-
-AC Milan
+["milan","rome"]
 ------TKToursBoundary
 Content-Disposition: form-data; name="year"
 
@@ -173,6 +169,7 @@ Accept: application/json
   "countryCode": "CA",
   "familyKey": "CAMP",
   "programSlug": "canada-summer-camp",
+  "locationSlugs": ["montreal", "quebec"],
   "type": "BROCHURE",
   "title": "Canada Summer Camp brochure 2026",
   "description": "Latest brochure for summer camp",

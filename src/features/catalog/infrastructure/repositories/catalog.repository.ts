@@ -358,6 +358,10 @@ export class CatalogRepository implements CatalogReadRepository {
       throw new NotFoundAppError('Location not found');
     }
 
+    if (input.countryCode !== undefined && input.countryCode.trim().toUpperCase() !== current.country.code) {
+      throw new ConflictAppError('A location cannot be moved to another country; create a new location instead');
+    }
+
     let nextCountryId: string | undefined;
     if (input.countryCode !== undefined) {
       const country = await prisma.country.findUnique({

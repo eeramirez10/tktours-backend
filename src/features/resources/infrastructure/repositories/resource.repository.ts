@@ -47,6 +47,10 @@ const listSelect = {
     },
   },
   location: { select: { id: true, slug: true, name: true, venueName: true, description: true } },
+  locationAssignments: {
+    orderBy: { location: { name: 'asc' } },
+    select: { location: { select: { id: true, slug: true, name: true, venueName: true, description: true } } },
+  },
   versions: {
     where: { isCurrent: true },
     orderBy: { versionNumber: 'desc' },
@@ -117,6 +121,7 @@ type ResolvedRelations = {
   programName: string | null;
   programSeasonKeys: string[];
   locationId: string | null;
+  locationIds: string[];
 };
 
 function toPublicUrl(pathOrUrl: string): string {
@@ -192,6 +197,8 @@ function mapListResource(resource: ResourceListRecord): ResourceListItem {
         weekOptions,
       }
     : null;
+  const locations = resource.locationAssignments.map((assignment) => assignment.location);
+  const primaryLocation = resource.location ?? locations[0];
 
   return {
     id: resource.id,
@@ -205,7 +212,8 @@ function mapListResource(resource: ResourceListRecord): ResourceListItem {
     country: resource.country,
     family: resource.family,
     program,
-    location: resource.location,
+    location: primaryLocation,
+    locations,
     currentVersion: mapCurrentVersion(currentVersion),
     currentExtraction: mapExtraction(currentVersion?.extraction ?? null),
     createdAt: resource.createdAt,
@@ -230,15 +238,15 @@ export class ResourceRepository implements ResourceReadRepository {
       ...(query.countryCode ? { country: { code: query.countryCode } } : {}),
       ...(query.familyKey ? { family: { key: query.familyKey } } : {}),
       ...(query.programSlug ? { program: { slug: query.programSlug } } : {}),
-      ...(query.locationSlug ? { location: { slug: query.locationSlug } } : {}),
+      ...(query.locationSlug ? { locationAssignments: { some: { location: { slug: query.locationSlug } } } } : {}),
       ...(query.search
         ? {
             OR: [
               { title: { contains: query.search, mode: 'insensitive' } },
               { description: { contains: query.search, mode: 'insensitive' } },
               { program: { name: { contains: query.search, mode: 'insensitive' } } },
-              { location: { name: { contains: query.search, mode: 'insensitive' } } },
-              { location: { venueName: { contains: query.search, mode: 'insensitive' } } },
+              { locationAssignments: { some: { location: { name: { contains: query.search, mode: 'insensitive' } } } } },
+              { locationAssignments: { some: { location: { venueName: { contains: query.search, mode: 'insensitive' } } } } },
             ],
           }
         : {}),
@@ -278,6 +286,9 @@ export class ResourceRepository implements ResourceReadRepository {
           familyId: relations.familyId,
           programId: relations.programId,
           locationId: relations.locationId,
+          locationAssignments: {
+            create: relations.locationIds.map((locationId) => ({ locationId })),
+          },
           type: input.type,
           title: input.title,
           description: input.description,
@@ -320,6 +331,7 @@ export class ResourceRepository implements ResourceReadRepository {
         family: { select: { key: true } },
         program: { select: { slug: true } },
         location: { select: { slug: true } },
+        locationAssignments: { select: { location: { select: { slug: true } } } },
       },
     });
 
@@ -332,9 +344,13 @@ export class ResourceRepository implements ResourceReadRepository {
     const nextProgramSlug = Object.prototype.hasOwnProperty.call(input, 'programSlug')
       ? input.programSlug ?? undefined
       : current.program?.slug;
-    const nextLocationSlug = Object.prototype.hasOwnProperty.call(input, 'locationSlug')
-      ? input.locationSlug ?? undefined
-      : current.location?.slug;
+    const nextLocationSlugs = Object.prototype.hasOwnProperty.call(input, 'locationSlugs')
+      ? input.locationSlugs
+      : Object.prototype.hasOwnProperty.call(input, 'locationSlug')
+        ? input.locationSlug ? [input.locationSlug] : []
+        : current.locationAssignments.length > 0
+          ? current.locationAssignments.map((assignment) => assignment.location.slug)
+          : current.location?.slug ? [current.location.slug] : [];
     const nextType = input.type ?? current.type;
     const nextActive = input.active ?? current.active;
 
@@ -342,7 +358,7 @@ export class ResourceRepository implements ResourceReadRepository {
       countryCode: nextCountryCode,
       familyKey: nextFamilyKey,
       programSlug: nextProgramSlug,
-      locationSlug: nextLocationSlug,
+      locationSlugs: nextLocationSlugs,
     });
     await this.validateResourceRelations({
       relations,
@@ -370,6 +386,14 @@ export class ResourceRepository implements ResourceReadRepository {
         select: detailSelect,
       });
 
+      await tx.resourceLocationAssignment.deleteMany({ where: { resourceId: input.resourceId } });
+      if (relations.locationIds.length > 0) {
+        await tx.resourceLocationAssignment.createMany({
+          data: relations.locationIds.map((locationId) => ({ resourceId: input.resourceId, locationId })),
+          skipDuplicates: true,
+        });
+      }
+
       await this.syncProgramWeekOptions(tx, {
         programId: relations.programId,
         weekOptions: input.weekOptions,
@@ -393,6 +417,7 @@ export class ResourceRepository implements ResourceReadRepository {
             family: { select: { key: true } },
             program: { select: { slug: true } },
             location: { select: { slug: true } },
+            locationAssignments: { select: { location: { select: { slug: true } } } },
           },
         });
 
@@ -404,7 +429,9 @@ export class ResourceRepository implements ResourceReadRepository {
           countryCode: current.country.code,
           familyKey: current.family?.key ?? undefined,
           programSlug: current.program?.slug ?? undefined,
-          locationSlug: current.location?.slug ?? undefined,
+          locationSlugs: current.locationAssignments.length > 0
+            ? current.locationAssignments.map((assignment) => assignment.location.slug)
+            : current.location?.slug ? [current.location.slug] : [],
         });
         await this.validateResourceRelations({
           relations,
@@ -700,6 +727,7 @@ export class ResourceRepository implements ResourceReadRepository {
     familyKey?: string;
     programSlug?: string;
     locationSlug?: string;
+    locationSlugs?: string[];
     locationName?: string;
     locationVenueName?: string | null;
     locationDescription?: string | null;
@@ -724,40 +752,44 @@ export class ResourceRepository implements ResourceReadRepository {
       throw new NotFoundAppError(`Family not found for key ${input.familyKey}`);
     }
 
-    const requestedLocationSlug = input.locationSlug ?? (input.locationName ? this.slugify(input.locationName) : undefined);
-    if (input.locationName && !requestedLocationSlug) {
+    const generatedLocationSlug = input.locationName ? this.slugify(input.locationName) : undefined;
+    const requestedLocationSlugs = Array.from(new Set([
+      ...(input.locationSlugs ?? []),
+      ...(input.locationSlug ? [input.locationSlug] : []),
+      ...(generatedLocationSlug ? [generatedLocationSlug] : []),
+    ].map((slug) => slug.trim()).filter(Boolean)));
+    if (input.locationName && !generatedLocationSlug) {
       throw new ValidationAppError('locationName cannot be converted to a valid slug');
     }
-    let location = requestedLocationSlug
-      ? await prisma.programLocation.findFirst({
-          where: {
-            slug: requestedLocationSlug,
-            countryId: country.id,
-          },
-          select: {
-            id: true,
-          },
+    let locations = requestedLocationSlugs.length > 0
+      ? await prisma.programLocation.findMany({
+          where: { slug: { in: requestedLocationSlugs }, countryId: country.id },
+          select: { id: true, slug: true },
         })
-      : null;
+      : [];
 
-    if (requestedLocationSlug && !location && input.locationName) {
-      location = await prisma.programLocation.create({
+    if (generatedLocationSlug && !locations.some((location) => location.slug === generatedLocationSlug)) {
+      const location = await prisma.programLocation.create({
         data: {
           countryId: country.id,
-          slug: requestedLocationSlug,
-          name: input.locationName.trim(),
+          slug: generatedLocationSlug,
+          name: input.locationName!.trim(),
           venueName: input.locationVenueName ?? null,
           description: input.locationDescription ?? null,
           active: true,
         },
         select: {
           id: true,
+          slug: true,
         },
       });
+      locations = [...locations, location];
     }
 
-    if (requestedLocationSlug && !location) {
-      throw new NotFoundAppError(`Location not found for slug ${requestedLocationSlug} in country ${input.countryCode}`);
+    const foundLocationSlugs = new Set(locations.map((location) => location.slug));
+    const missingLocationSlugs = requestedLocationSlugs.filter((slug) => !foundLocationSlugs.has(slug));
+    if (missingLocationSlugs.length > 0) {
+      throw new NotFoundAppError(`Locations not found in country ${input.countryCode}: ${missingLocationSlugs.join(', ')}`);
     }
 
     const program = input.programSlug
@@ -792,9 +824,16 @@ export class ResourceRepository implements ResourceReadRepository {
       throw new ValidationAppError('familyKey is required when programSlug is provided');
     }
 
-    if (program && location && program.locationId && program.locationId !== location.id) {
-      location = null;
-    }
+    const locationIdsBySlug = new Map(locations.map((location) => [location.slug, location.id]));
+    const explicitLocationIds = requestedLocationSlugs
+      .map((slug) => locationIdsBySlug.get(slug))
+      .filter((id): id is string => Boolean(id));
+    const hasExplicitLocationSelection = input.locationSlugs !== undefined || input.locationSlug !== undefined;
+    const locationIds = hasExplicitLocationSelection
+      ? explicitLocationIds
+      : explicitLocationIds.length > 0
+        ? explicitLocationIds
+        : program?.locationId ? [program.locationId] : [];
 
     return {
       countryId: country.id,
@@ -806,7 +845,8 @@ export class ResourceRepository implements ResourceReadRepository {
       programSlug: program?.slug ?? null,
       programName: program?.name ?? null,
       programSeasonKeys: this.extractSeasonKeys((program?.startWindows ?? []).map((window) => window.seasonKey)),
-      locationId: program?.locationId ?? location?.id ?? null,
+      locationId: locationIds[0] ?? null,
+      locationIds,
     };
   }
 

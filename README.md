@@ -178,8 +178,13 @@ El schema actual incluye entidades como:
 
 ### Catalog
 - `GET /api/catalog/health`
+- `GET /api/catalog/reference/countries`
+- `GET /api/catalog/reference/cities?countryCode=CA&search=montreal`
 - `GET /api/catalog/countries`
+- `POST /api/catalog/countries`
 - `GET /api/catalog/families`
+- `GET /api/catalog/locations`
+- `POST /api/catalog/locations`
 - `GET /api/catalog/programs`
 - `GET /api/catalog/programs/:slug`
 - `GET /api/catalog/programs/recommendations`
@@ -194,6 +199,10 @@ El schema actual incluye entidades como:
 - `POST /api/resources/:resourceId/versions`
 - `GET /api/resources/:resourceId/versions/:versionId/download`
 - `DELETE /api/resources/:resourceId`
+
+Los endpoints de alta y edición de resources aceptan `locationSlugs` como arreglo. Cada slug debe pertenecer al país indicado; `locationSlug` se conserva temporalmente para compatibilidad con clientes anteriores.
+
+Las rutas `catalog/reference/*` funcionan como sugerencias externas para el autocompletado. Un país o una ciudad sólo forma parte del sistema después de guardarse en el catálogo local, que continúa siendo la fuente de verdad del concierge.
 
 ### Conversations
 - `GET /api/conversations/health`

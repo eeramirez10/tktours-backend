@@ -16,6 +16,14 @@ Accept: application/json
 GET {{baseUrl}}/api/catalog/countries?active=false
 Accept: application/json
 
+### Worldwide country suggestions
+GET {{baseUrl}}/api/catalog/reference/countries?search=canada
+Accept: application/json
+
+### Worldwide city suggestions by ISO country code
+GET {{baseUrl}}/api/catalog/reference/cities?countryCode=CA&search=montreal
+Accept: application/json
+
 ### Families - active only (default)
 GET {{baseUrl}}/api/catalog/families
 Accept: application/json

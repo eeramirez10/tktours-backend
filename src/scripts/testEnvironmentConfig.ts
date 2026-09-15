@@ -28,6 +28,14 @@ if (parsed.OPENAI_TIMEOUT_MS !== 30_000 || parsed.PORT !== 3000) {
   throw new Error('Expected numeric environment defaults were not applied');
 }
 
+if (
+  parsed.GEO_CATALOG_BASE_URL !== 'https://countriesnow.space/api/v0.1/countries' ||
+  parsed.GEO_CATALOG_TIMEOUT_MS !== 10_000 ||
+  parsed.GEO_CATALOG_CACHE_TTL_MS !== 3_600_000
+) {
+  throw new Error('Expected geographic catalog defaults were not applied');
+}
+
 let rejectedInvalidPort = false;
 try {
   parseEnv({ ...validEnvironment, PORT: '70000' });

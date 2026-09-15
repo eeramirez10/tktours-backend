@@ -145,6 +145,7 @@ export class ResourcesController {
         familyKey: body.familyKey,
         programSlug: body.programSlug,
         locationSlug: body.locationSlug,
+        locationSlugs: body.locationSlugs,
         locationName: body.locationName,
         locationVenueName: body.locationVenueName,
         locationDescription: body.locationDescription,

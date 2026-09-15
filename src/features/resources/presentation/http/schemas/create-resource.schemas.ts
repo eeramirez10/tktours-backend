@@ -58,6 +58,9 @@ const optionalWeekOptionsSchema = z.preprocess((value) => {
 }, z.array(z.number().int().min(1).max(104)).max(52).optional())
   .transform((value) => (value ? Array.from(new Set(value)).sort((a, b) => a - b) : undefined));
 
+const optionalLocationSlugsSchema = z.array(z.string().trim().min(1)).max(100).optional()
+  .transform((value) => value ? Array.from(new Set(value)) : undefined);
+
 const initialVersionSchema = z
   .discriminatedUnion('sourceType', [
     z.object({
@@ -82,6 +85,7 @@ export const createResourceBodySchema = z
     familyKey: z.enum(FAMILY_KEYS).optional(),
     programSlug: optionalTrimmedStringSchema,
     locationSlug: optionalTrimmedStringSchema,
+    locationSlugs: optionalLocationSlugsSchema,
     locationName: optionalTrimmedStringSchema,
     locationVenueName: optionalNullableTrimmedStringSchema,
     locationDescription: optionalNullableTrimmedStringSchema,
@@ -108,6 +112,7 @@ export const createResourceBodySchema = z
     familyKey,
     programSlug,
     locationSlug,
+    locationSlugs,
     locationName,
     locationVenueName,
     locationDescription,
@@ -124,6 +129,7 @@ export const createResourceBodySchema = z
     familyKey,
     programSlug,
     locationSlug,
+    locationSlugs,
     locationName,
     locationVenueName: locationVenueName ?? null,
     locationDescription: locationDescription ?? null,

@@ -28,6 +28,7 @@ export type ResourceBaseInput = {
   familyKey?: ResourceFamilyKey;
   programSlug?: string;
   locationSlug?: string;
+  locationSlugs?: string[];
   locationName?: string;
   locationVenueName?: string | null;
   locationDescription?: string | null;
@@ -51,6 +52,7 @@ export type UpdateResourceInput = {
   familyKey?: ResourceFamilyKey;
   programSlug?: string | null;
   locationSlug?: string | null;
+  locationSlugs?: string[];
   type?: ResourceTypeKey;
   title?: string;
   description?: string | null;
@@ -157,6 +159,7 @@ export type ResourceListItem = {
   family: ResourceFamily | null;
   program: ResourceProgram | null;
   location: ResourceLocation | null;
+  locations: ResourceLocation[];
   currentVersion: ResourceCurrentVersion | null;
   currentExtraction: ResourceCurrentExtraction | null;
   createdAt: Date;

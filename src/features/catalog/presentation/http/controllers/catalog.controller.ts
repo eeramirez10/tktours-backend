@@ -10,6 +10,7 @@ import { ListCatalogLocationsUseCase } from '../../../application/use-cases/list
 import { ListCatalogProgramsUseCase } from '../../../application/use-cases/list-catalog-programs.use-case.js';
 import { ListCatalogRecommendedProgramsUseCase } from '../../../application/use-cases/list-catalog-recommended-programs.use-case.js';
 import { CatalogRepository } from '../../../infrastructure/repositories/catalog.repository.js';
+import { GeoReferenceService } from '../../../application/services/geo-reference.service.js';
 import {
   catalogCountryIdParamsSchema,
   catalogLocationIdParamsSchema,
@@ -27,6 +28,7 @@ import {
   listCatalogProgramsQuerySchema,
 } from '../schemas/catalog-query.schemas.js';
 import { listCatalogRecommendationsQuerySchema } from '../schemas/catalog-recommendations-query.schemas.js';
+import { referenceCitiesQuerySchema, referenceCountriesQuerySchema } from '../schemas/geo-reference.schemas.js';
 
 const catalogRepository = new CatalogRepository();
 const getCatalogHealthUseCase = new GetCatalogHealthUseCase();
@@ -36,12 +38,33 @@ const listCatalogLocationsUseCase = new ListCatalogLocationsUseCase(catalogRepos
 const listCatalogProgramsUseCase = new ListCatalogProgramsUseCase(catalogRepository);
 const getCatalogProgramBySlugUseCase = new GetCatalogProgramBySlugUseCase(catalogRepository);
 const listCatalogRecommendedProgramsUseCase = new ListCatalogRecommendedProgramsUseCase(catalogRepository);
+const geoReferenceService = new GeoReferenceService();
 
 function toValidationError(error: ZodError, message: string) {
   return new ValidationAppError(message, error.flatten());
 }
 
 export class CatalogController {
+  async listReferenceCountries(req: Request, res: Response, next: NextFunction) {
+    try {
+      const query = referenceCountriesQuerySchema.parse(req.query);
+      const data = await geoReferenceService.listCountries(query.search);
+      return res.json({ ok: true, data });
+    } catch (error) {
+      return next(error instanceof ZodError ? toValidationError(error, 'Invalid country reference query') : error);
+    }
+  }
+
+  async listReferenceCities(req: Request, res: Response, next: NextFunction) {
+    try {
+      const query = referenceCitiesQuerySchema.parse(req.query);
+      const data = await geoReferenceService.listCities(query.countryCode, query.search);
+      return res.json({ ok: true, data });
+    } catch (error) {
+      return next(error instanceof ZodError ? toValidationError(error, 'Invalid city reference query') : error);
+    }
+  }
+
   getHealth(_req: Request, res: Response) {
     return res.json({ ok: true, data: getCatalogHealthUseCase.execute() });
   }
