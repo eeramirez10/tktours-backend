@@ -271,15 +271,15 @@ export class ResourceRepository implements ResourceReadRepository {
   }
 
   async createResource(input: CreateResourceInput): Promise<ResourceDetail> {
-    const relations = await this.resolveRelations(input);
-    await this.validateResourceRelations({
-      relations,
-      resourceId: null,
-      type: input.type,
-      active: input.active,
-    });
-
     const resource = await prisma.$transaction(async (tx) => {
+      const relations = await this.resolveRelations(input, tx);
+      await this.validateResourceRelations({
+        relations,
+        resourceId: null,
+        type: input.type,
+        active: input.active,
+      }, tx);
+
       const created = await tx.resource.create({
         data: {
           countryId: relations.countryId,
@@ -321,53 +321,58 @@ export class ResourceRepository implements ResourceReadRepository {
   }
 
   async updateResource(input: UpdateResourceInput): Promise<ResourceDetail> {
-    const current = await prisma.resource.findUnique({
-      where: { id: input.resourceId },
-      select: {
-        id: true,
-        type: true,
-        active: true,
-        country: { select: { code: true } },
-        family: { select: { key: true } },
-        program: { select: { slug: true } },
-        location: { select: { slug: true } },
-        locationAssignments: { select: { location: { select: { slug: true } } } },
-      },
-    });
-
-    if (!current) {
-      throw new NotFoundAppError('Resource not found');
-    }
-
-    const nextCountryCode = input.countryCode ?? current.country.code;
-    const nextFamilyKey = input.familyKey ?? current.family?.key;
-    const nextProgramSlug = Object.prototype.hasOwnProperty.call(input, 'programSlug')
-      ? input.programSlug ?? undefined
-      : current.program?.slug;
-    const nextLocationSlugs = Object.prototype.hasOwnProperty.call(input, 'locationSlugs')
-      ? input.locationSlugs
-      : Object.prototype.hasOwnProperty.call(input, 'locationSlug')
-        ? input.locationSlug ? [input.locationSlug] : []
-        : current.locationAssignments.length > 0
-          ? current.locationAssignments.map((assignment) => assignment.location.slug)
-          : current.location?.slug ? [current.location.slug] : [];
-    const nextType = input.type ?? current.type;
-    const nextActive = input.active ?? current.active;
-
-    const relations = await this.resolveRelations({
-      countryCode: nextCountryCode,
-      familyKey: nextFamilyKey,
-      programSlug: nextProgramSlug,
-      locationSlugs: nextLocationSlugs,
-    });
-    await this.validateResourceRelations({
-      relations,
-      resourceId: input.resourceId,
-      type: nextType,
-      active: nextActive,
-    });
-
     const updated = await prisma.$transaction(async (tx) => {
+      const current = await tx.resource.findUnique({
+        where: { id: input.resourceId },
+        select: {
+          id: true,
+          type: true,
+          active: true,
+          country: { select: { code: true } },
+          family: { select: { key: true } },
+          program: { select: { slug: true } },
+          location: { select: { slug: true } },
+          locationAssignments: { select: { location: { select: { slug: true } } } },
+        },
+      });
+
+      if (!current) {
+        throw new NotFoundAppError('Resource not found');
+      }
+
+      const hasLocationNames = Object.prototype.hasOwnProperty.call(input, 'locationNames');
+      const nextCountryCode = input.countryCode ?? current.country.code;
+      const nextFamilyKey = input.familyKey ?? current.family?.key;
+      const nextProgramSlug = Object.prototype.hasOwnProperty.call(input, 'programSlug')
+        ? input.programSlug ?? undefined
+        : current.program?.slug;
+      const nextLocationSlugs = hasLocationNames
+        ? []
+        : Object.prototype.hasOwnProperty.call(input, 'locationSlugs')
+          ? input.locationSlugs
+          : Object.prototype.hasOwnProperty.call(input, 'locationSlug')
+            ? input.locationSlug ? [input.locationSlug] : []
+            : current.locationAssignments.length > 0
+              ? current.locationAssignments.map((assignment) => assignment.location.slug)
+              : current.location?.slug ? [current.location.slug] : [];
+      const nextType = input.type ?? current.type;
+      const nextActive = input.active ?? current.active;
+
+      const relations = await this.resolveRelations({
+        countryCode: nextCountryCode,
+        countryName: input.countryName,
+        familyKey: nextFamilyKey,
+        programSlug: nextProgramSlug,
+        locationSlugs: nextLocationSlugs,
+        locationNames: hasLocationNames ? input.locationNames : undefined,
+      }, tx);
+      await this.validateResourceRelations({
+        relations,
+        resourceId: input.resourceId,
+        type: nextType,
+        active: nextActive,
+      }, tx);
+
       const resource = await tx.resource.update({
         where: { id: input.resourceId },
         data: {
@@ -724,25 +729,42 @@ export class ResourceRepository implements ResourceReadRepository {
 
   private async resolveRelations(input: {
     countryCode: string;
+    countryName?: string;
     familyKey?: string;
     programSlug?: string;
     locationSlug?: string;
     locationSlugs?: string[];
+    locationNames?: string[];
     locationName?: string;
     locationVenueName?: string | null;
     locationDescription?: string | null;
-  }): Promise<ResolvedRelations> {
-    const country = await prisma.country.findUnique({
-      where: { code: input.countryCode },
-      select: { id: true, code: true, name: true },
-    });
+  }, db: Prisma.TransactionClient = prisma): Promise<ResolvedRelations> {
+    const countryCode = input.countryCode.trim().toUpperCase();
+    const providedCountryName = input.countryName?.trim();
+    let country = providedCountryName
+      ? await db.country.upsert({
+          where: { code: countryCode },
+          create: { code: countryCode, name: providedCountryName, active: true },
+          update: { active: true },
+          select: { id: true, code: true, name: true, active: true },
+        })
+      : await db.country.findUnique({
+          where: { code: countryCode },
+          select: { id: true, code: true, name: true, active: true },
+        });
 
     if (!country) {
-      throw new NotFoundAppError(`Country not found for code ${input.countryCode}`);
+      throw new NotFoundAppError(`Country not found for code ${countryCode}`);
+    } else if (!country.active) {
+      country = await db.country.update({
+        where: { id: country.id },
+        data: { active: true },
+        select: { id: true, code: true, name: true, active: true },
+      });
     }
 
     const family = input.familyKey
-      ? await prisma.productFamily.findUnique({
+      ? await db.productFamily.findUnique({
           where: { key: input.familyKey as never },
           select: { id: true, key: true },
         })
@@ -752,48 +774,53 @@ export class ResourceRepository implements ResourceReadRepository {
       throw new NotFoundAppError(`Family not found for key ${input.familyKey}`);
     }
 
-    const generatedLocationSlug = input.locationName ? this.slugify(input.locationName) : undefined;
+    const locationNames = Array.from(new Set([
+      ...(input.locationNames ?? []),
+      ...(input.locationName ? [input.locationName] : []),
+    ].map((name) => name.trim()).filter(Boolean)));
+    const locationNamesBySlug = new Map(locationNames.map((name) => [this.slugify(name), name]));
+    if ([...locationNamesBySlug.keys()].some((slug) => !slug)) {
+      throw new ValidationAppError('A location name cannot be converted to a valid slug');
+    }
     const requestedLocationSlugs = Array.from(new Set([
       ...(input.locationSlugs ?? []),
       ...(input.locationSlug ? [input.locationSlug] : []),
-      ...(generatedLocationSlug ? [generatedLocationSlug] : []),
+      ...locationNamesBySlug.keys(),
     ].map((slug) => slug.trim()).filter(Boolean)));
-    if (input.locationName && !generatedLocationSlug) {
-      throw new ValidationAppError('locationName cannot be converted to a valid slug');
-    }
     let locations = requestedLocationSlugs.length > 0
-      ? await prisma.programLocation.findMany({
+      ? await db.programLocation.findMany({
           where: { slug: { in: requestedLocationSlugs }, countryId: country.id },
           select: { id: true, slug: true },
         })
       : [];
 
-    if (generatedLocationSlug && !locations.some((location) => location.slug === generatedLocationSlug)) {
-      const location = await prisma.programLocation.create({
-        data: {
+    for (const [slug, name] of locationNamesBySlug) {
+      const location = await db.programLocation.upsert({
+        where: {
+          countryId_slug: { countryId: country.id, slug },
+        },
+        create: {
           countryId: country.id,
-          slug: generatedLocationSlug,
-          name: input.locationName!.trim(),
-          venueName: input.locationVenueName ?? null,
-          description: input.locationDescription ?? null,
+          slug,
+          name,
+          venueName: name === input.locationName?.trim() ? input.locationVenueName ?? null : null,
+          description: name === input.locationName?.trim() ? input.locationDescription ?? null : null,
           active: true,
         },
-        select: {
-          id: true,
-          slug: true,
-        },
+        update: { active: true },
+        select: { id: true, slug: true },
       });
-      locations = [...locations, location];
+      locations = [...locations.filter((item) => item.slug !== slug), location];
     }
 
     const foundLocationSlugs = new Set(locations.map((location) => location.slug));
     const missingLocationSlugs = requestedLocationSlugs.filter((slug) => !foundLocationSlugs.has(slug));
     if (missingLocationSlugs.length > 0) {
-      throw new NotFoundAppError(`Locations not found in country ${input.countryCode}: ${missingLocationSlugs.join(', ')}`);
+      throw new NotFoundAppError(`Locations not found in country ${countryCode}: ${missingLocationSlugs.join(', ')}`);
     }
 
     const program = input.programSlug
-      ? await prisma.program.findFirst({
+      ? await db.program.findFirst({
           where: {
             slug: input.programSlug,
             countryId: country.id,
@@ -813,7 +840,7 @@ export class ResourceRepository implements ResourceReadRepository {
       : null;
 
     if (input.programSlug && !program) {
-      throw new NotFoundAppError(`Program not found for slug ${input.programSlug} in country ${input.countryCode}`);
+      throw new NotFoundAppError(`Program not found for slug ${input.programSlug} in country ${countryCode}`);
     }
 
     if (program && family && program.familyId !== family.id) {
@@ -828,7 +855,7 @@ export class ResourceRepository implements ResourceReadRepository {
     const explicitLocationIds = requestedLocationSlugs
       .map((slug) => locationIdsBySlug.get(slug))
       .filter((id): id is string => Boolean(id));
-    const hasExplicitLocationSelection = input.locationSlugs !== undefined || input.locationSlug !== undefined;
+    const hasExplicitLocationSelection = input.locationSlugs !== undefined || input.locationSlug !== undefined || input.locationNames !== undefined || input.locationName !== undefined;
     const locationIds = hasExplicitLocationSelection
       ? explicitLocationIds
       : explicitLocationIds.length > 0
@@ -870,7 +897,7 @@ export class ResourceRepository implements ResourceReadRepository {
     resourceId: string | null;
     type?: string;
     active: boolean;
-  }): Promise<void> {
+  }, db: Prisma.TransactionClient = prisma): Promise<void> {
     if (input.relations.familyKey !== 'CAMP' || input.type !== 'BROCHURE' || !input.active) {
       return;
     }
@@ -883,7 +910,7 @@ export class ResourceRepository implements ResourceReadRepository {
       throw new ValidationAppError('Camp brochure program must define at least one seasonal start window');
     }
 
-    const duplicateResource = await prisma.resource.findFirst({
+    const duplicateResource = await db.resource.findFirst({
       where: {
         ...(input.resourceId ? { id: { not: input.resourceId } } : {}),
         active: true,

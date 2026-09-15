@@ -101,13 +101,30 @@ const optionalLocationSlugsSchema = z.preprocess((value) => {
 }, z.array(z.string().trim().min(1)).max(100).optional())
   .transform((value) => value ? Array.from(new Set(value.map((item) => item.trim()).filter(Boolean))) : undefined);
 
+const optionalLocationNamesSchema = z.preprocess((value) => {
+  if (value === undefined || value === null || value === '') return undefined;
+  if (Array.isArray(value)) return value;
+  if (typeof value === 'string') {
+    try {
+      const parsed = JSON.parse(value);
+      if (Array.isArray(parsed)) return parsed;
+    } catch {
+      return value.split(',');
+    }
+  }
+  return value;
+}, z.array(z.string().trim().min(1).max(150)).max(100).optional())
+  .transform((value) => value ? Array.from(new Set(value.map((item) => item.trim()).filter(Boolean))) : undefined);
+
 export const uploadResourceBodySchema = z
   .object({
     countryCode: z.string().trim().min(2).max(3),
+    countryName: optionalTrimmedStringSchema,
     familyKey: z.enum(FAMILY_KEYS).optional(),
     programSlug: optionalTrimmedStringSchema,
     locationSlug: optionalTrimmedStringSchema,
     locationSlugs: optionalLocationSlugsSchema,
+    locationNames: optionalLocationNamesSchema,
     locationName: optionalTrimmedStringSchema,
     locationVenueName: optionalNullableTrimmedStringSchema,
     locationDescription: optionalNullableTrimmedStringSchema,
@@ -132,10 +149,12 @@ export const uploadResourceBodySchema = z
   })
   .transform((value) => ({
     countryCode: value.countryCode.trim().toUpperCase(),
+    countryName: value.countryName,
     familyKey: value.familyKey,
     programSlug: value.programSlug,
     locationSlug: value.locationSlug,
     locationSlugs: value.locationSlugs,
+    locationNames: value.locationNames,
     locationName: value.locationName,
     locationVenueName: value.locationVenueName ?? null,
     locationDescription: value.locationDescription ?? null,

@@ -142,10 +142,12 @@ export class ResourcesController {
       const body = uploadResourceBodySchema.parse(req.body);
       const data = await createResourceUseCase.execute({
         countryCode: body.countryCode,
+        countryName: body.countryName,
         familyKey: body.familyKey,
         programSlug: body.programSlug,
         locationSlug: body.locationSlug,
         locationSlugs: body.locationSlugs,
+        locationNames: body.locationNames,
         locationName: body.locationName,
         locationVenueName: body.locationVenueName,
         locationDescription: body.locationDescription,

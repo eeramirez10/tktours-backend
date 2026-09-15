@@ -74,6 +74,10 @@ Content-Disposition: form-data; name="countryCode"
 
 IT
 ------TKToursBoundary
+Content-Disposition: form-data; name="countryName"
+
+Italia
+------TKToursBoundary
 Content-Disposition: form-data; name="familyKey"
 
 CAMP
@@ -90,9 +94,9 @@ Content-Disposition: form-data; name="description"
 
 Folleto del campamento en Milán, Italia.
 ------TKToursBoundary
-Content-Disposition: form-data; name="locationSlugs"
+Content-Disposition: form-data; name="locationNames"
 
-["milan","rome"]
+["Milán","Roma"]
 ------TKToursBoundary
 Content-Disposition: form-data; name="year"
 
@@ -118,6 +122,10 @@ Content-Disposition: form-data; name="countryCode"
 
 CA
 ------TKToursBoundary
+Content-Disposition: form-data; name="countryName"
+
+Canadá
+------TKToursBoundary
 Content-Disposition: form-data; name="familyKey"
 
 LANGUAGE_COURSE
@@ -134,9 +142,9 @@ Content-Disposition: form-data; name="description"
 
 Presentación del curso de idiomas en Montreal.
 ------TKToursBoundary
-Content-Disposition: form-data; name="locationName"
+Content-Disposition: form-data; name="locationNames"
 
-Montreal
+["Montreal","Quebec"]
 ------TKToursBoundary
 Content-Disposition: form-data; name="year"
 
@@ -154,6 +162,8 @@ Accept: application/json
 
 {
   "countryCode": "CA",
+  "countryName": "Canadá",
+  "locationNames": ["Montreal", "Quebec"],
   "type": "INFO",
   "title": "Canada general info sheet",
   "description": "Useful high-level info for Canada programs",
@@ -167,9 +177,10 @@ Accept: application/json
 
 {
   "countryCode": "CA",
+  "countryName": "Canadá",
   "familyKey": "CAMP",
   "programSlug": "canada-summer-camp",
-  "locationSlugs": ["montreal", "quebec"],
+  "locationNames": ["Montreal", "Quebec"],
   "type": "BROCHURE",
   "title": "Canada Summer Camp brochure 2026",
   "description": "Latest brochure for summer camp",
@@ -191,9 +202,9 @@ Accept: application/json
 
 {
   "countryCode": "IT",
+  "countryName": "Italia",
   "familyKey": "CAMP",
-  "locationName": "Milán",
-  "locationVenueName": "AC Milan",
+  "locationNames": ["Milán", "Roma"],
   "type": "BROCHURE",
   "title": "Campamento Milán AC Milan 2026",
   "description": "Folleto externo del campamento en Milán",

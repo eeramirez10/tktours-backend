@@ -1,50 +1,51 @@
 import assert from 'node:assert/strict';
+import { randomBytes } from 'node:crypto';
 
 import { ResourceRepository } from '../features/resources/infrastructure/repositories/resource.repository.js';
 import { prisma } from '../shared/infrastructure/database/prisma.js';
 
 const repository = new ResourceRepository();
 const suffix = Date.now().toString(36);
-const locationIds: string[] = [];
+const countryCode = `Z${randomBytes(1).toString('hex').slice(0, 2)}`.toUpperCase();
+const rollbackCountryCode = `Y${randomBytes(1).toString('hex').slice(0, 2)}`.toUpperCase();
+const countryName = `Test Country ${suffix}`;
+const cityNames = [`Test City One ${suffix}`, `Test City Two ${suffix}`];
+const expectedSlugs = cityNames.map(slugify);
 let resourceId: string | undefined;
 
 try {
-  const country =
-    (await prisma.country.findUnique({ where: { code: 'CA' }, select: { id: true, code: true } })) ??
-    (await prisma.country.findFirst({ select: { id: true, code: true } }));
-  assert(country, 'The development database needs at least one country');
+  assert.equal(await prisma.country.findUnique({ where: { code: countryCode } }), null);
+  assert.equal(await prisma.country.findUnique({ where: { code: rollbackCountryCode } }), null);
 
-  for (const index of [1, 2]) {
-    const location = await prisma.programLocation.create({
-      data: {
-        countryId: country.id,
-        name: `Test City ${index} ${suffix}`,
-        slug: `test-city-${index}-${suffix}`,
-        active: true,
-      },
-      select: { id: true },
-    });
-    locationIds.push(location.id);
-  }
-
-  const locations = await prisma.programLocation.findMany({
-    where: { id: { in: locationIds } },
-    orderBy: { name: 'asc' },
-    select: { slug: true },
-  });
-  const expectedSlugs = locations.map((location) => location.slug);
+  await assert.rejects(repository.createResource({
+    countryCode: rollbackCountryCode,
+    countryName: `Rollback Country ${suffix}`,
+    familyKey: 'CAMP',
+    programSlug: `missing-program-${suffix}`,
+    locationNames: [`Rollback City ${suffix}`],
+    type: 'BROCHURE',
+    title: `ROLLBACK_DESTINATION_TEST_${suffix}`,
+    description: null,
+    month: null,
+    year: null,
+    active: true,
+  }));
+  assert.equal(await prisma.country.findUnique({ where: { code: rollbackCountryCode } }), null);
 
   const created = await repository.createResource({
-    countryCode: country.code,
-    locationSlugs: expectedSlugs,
+    countryCode,
+    countryName,
+    locationNames: cityNames,
     type: 'INFO',
-    title: `MULTI_CITY_TEST_${suffix}`,
+    title: `INLINE_DESTINATION_TEST_${suffix}`,
     description: null,
     month: null,
     year: null,
     active: false,
   });
   resourceId = created.id;
+
+  assert.equal(created.country.name, countryName);
   assert.deepEqual(created.locations.map((location) => location.slug).sort(), [...expectedSlugs].sort());
 
   const foundBySecondCity = await repository.findResources({
@@ -55,16 +56,31 @@ try {
 
   const updated = await repository.updateResource({
     resourceId: created.id,
-    locationSlugs: [expectedSlugs[1]],
+    countryCode,
+    countryName,
+    locationNames: [cityNames[1]],
   });
   assert.deepEqual(updated.locations.map((location) => location.slug), [expectedSlugs[1]]);
   assert.equal(updated.location?.slug, expectedSlugs[1]);
+  assert.equal(await prisma.programLocation.count({ where: { country: { code: countryCode } } }), 2);
 
-  console.log('Resource multi-city persistence checks passed');
+  console.log('Inline destination creation and resource reuse checks passed');
 } finally {
   if (resourceId) await repository.deleteResource(resourceId);
-  if (locationIds.length > 0) {
-    await prisma.programLocation.deleteMany({ where: { id: { in: locationIds } } });
+  const country = await prisma.country.findUnique({ where: { code: countryCode }, select: { id: true, name: true } });
+  if (country?.name === countryName) {
+    await prisma.programLocation.deleteMany({ where: { countryId: country.id } });
+    await prisma.country.delete({ where: { id: country.id } });
   }
   await prisma.$disconnect();
+}
+
+function slugify(value: string): string {
+  return value
+    .trim()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
 }

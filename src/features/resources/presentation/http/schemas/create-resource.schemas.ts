@@ -61,6 +61,9 @@ const optionalWeekOptionsSchema = z.preprocess((value) => {
 const optionalLocationSlugsSchema = z.array(z.string().trim().min(1)).max(100).optional()
   .transform((value) => value ? Array.from(new Set(value)) : undefined);
 
+const optionalLocationNamesSchema = z.array(z.string().trim().min(1).max(150)).max(100).optional()
+  .transform((value) => value ? Array.from(new Set(value.map((item) => item.trim()))) : undefined);
+
 const initialVersionSchema = z
   .discriminatedUnion('sourceType', [
     z.object({
@@ -82,10 +85,12 @@ const initialVersionSchema = z
 export const createResourceBodySchema = z
   .object({
     countryCode: z.string().trim().min(2).max(3),
+    countryName: optionalTrimmedStringSchema,
     familyKey: z.enum(FAMILY_KEYS).optional(),
     programSlug: optionalTrimmedStringSchema,
     locationSlug: optionalTrimmedStringSchema,
     locationSlugs: optionalLocationSlugsSchema,
+    locationNames: optionalLocationNamesSchema,
     locationName: optionalTrimmedStringSchema,
     locationVenueName: optionalNullableTrimmedStringSchema,
     locationDescription: optionalNullableTrimmedStringSchema,
@@ -109,10 +114,12 @@ export const createResourceBodySchema = z
   })
   .transform(({
     countryCode,
+    countryName,
     familyKey,
     programSlug,
     locationSlug,
     locationSlugs,
+    locationNames,
     locationName,
     locationVenueName,
     locationDescription,
@@ -126,10 +133,12 @@ export const createResourceBodySchema = z
     initialVersion,
   }) => ({
     countryCode: countryCode.trim().toUpperCase(),
+    countryName,
     familyKey,
     programSlug,
     locationSlug,
     locationSlugs,
+    locationNames,
     locationName,
     locationVenueName: locationVenueName ?? null,
     locationDescription: locationDescription ?? null,

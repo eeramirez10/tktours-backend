@@ -25,10 +25,12 @@ export type ResourcesHealth = {
 
 export type ResourceBaseInput = {
   countryCode: string;
+  countryName?: string;
   familyKey?: ResourceFamilyKey;
   programSlug?: string;
   locationSlug?: string;
   locationSlugs?: string[];
+  locationNames?: string[];
   locationName?: string;
   locationVenueName?: string | null;
   locationDescription?: string | null;
@@ -49,10 +51,12 @@ export type CreateResourceInput = ResourceBaseInput & {
 export type UpdateResourceInput = {
   resourceId: string;
   countryCode?: string;
+  countryName?: string;
   familyKey?: ResourceFamilyKey;
   programSlug?: string | null;
   locationSlug?: string | null;
   locationSlugs?: string[];
+  locationNames?: string[];
   type?: ResourceTypeKey;
   title?: string;
   description?: string | null;
