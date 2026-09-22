@@ -5,6 +5,7 @@ import { OpenAiResponsesClient } from '../../../concierge/infrastructure/clients
 
 const analysisSchema = z.object({
   suggestedTitle: z.string().trim().max(255).nullable(),
+  programName: z.string().trim().max(160).nullable(),
   summary: z.string().trim().max(1500).nullable(),
   familyKey: z.enum(['CAMP', 'LANGUAGE_COURSE', 'SCHOOL_PROGRAM', 'UNKNOWN']),
   countryCode: z.string().trim().length(2).nullable(),
@@ -29,6 +30,7 @@ const analysisJsonSchema = {
   additionalProperties: false,
   properties: {
     suggestedTitle: { type: ['string', 'null'] },
+    programName: { type: ['string', 'null'] },
     summary: { type: ['string', 'null'] },
     familyKey: { type: 'string', enum: ['CAMP', 'LANGUAGE_COURSE', 'SCHOOL_PROGRAM', 'UNKNOWN'] },
     countryCode: { type: ['string', 'null'] },
@@ -46,7 +48,7 @@ const analysisJsonSchema = {
     confidence: { type: 'number' },
   },
   required: [
-    'suggestedTitle', 'summary', 'familyKey', 'countryCode', 'countryName', 'cities',
+    'suggestedTitle', 'programName', 'summary', 'familyKey', 'countryCode', 'countryName', 'cities',
     'validFrom', 'validUntil', 'minAge', 'maxAge', 'weekOptions', 'priceFrom', 'priceCurrency',
     'priceUnit', 'priceNotes', 'confidence',
   ],
@@ -74,6 +76,7 @@ export class ResourceDocumentAnalysisService {
         'priceCurrency debe ser un código ISO 4217 de tres letras. priceUnit debe ser una etiqueta breve como programa, semana o paquete.',
         'Solo conserva precio cuando el documento corresponda claramente a CAMP y sea un folleto. Para cualquier otro documento devuelve campos de precio en null.',
         'familyKey clasifica el documento como CAMP, LANGUAGE_COURSE, SCHOOL_PROGRAM o UNKNOWN.',
+        'programName identifica el nombre comercial específico del programa. No uses palabras como folleto, brochure, manual, tarifas ni el año del documento. Conserva temporada o sede solo cuando formen parte clara del nombre oficial. Usa null si no es posible identificarlo.',
         'suggestedTitle debe ser breve y útil para identificar el recurso. summary debe resumir el contenido en español.',
       ].join('\n'),
       input: [{
