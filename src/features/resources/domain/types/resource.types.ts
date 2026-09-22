@@ -1,6 +1,7 @@
 export type ResourceFamilyKey = string;
 
 export type ResourceTypeKey = 'QUOTE' | 'INFO' | 'BROCHURE' | 'MANUAL' | 'PRESENTATION';
+export type WritableResourceTypeKey = 'BROCHURE' | 'MANUAL';
 
 export type ResourceSourceType = 'UPLOAD' | 'EXTERNAL_LINK';
 
@@ -34,13 +35,21 @@ export type ResourceBaseInput = {
   locationName?: string;
   locationVenueName?: string | null;
   locationDescription?: string | null;
-  type: ResourceTypeKey;
+  type: WritableResourceTypeKey;
   title: string;
   description: string | null;
   month: number | null;
   year: number | null;
   active: boolean;
   weekOptions?: number[];
+  validFrom?: Date | null;
+  validUntil?: Date | null;
+  minAge?: number | null;
+  maxAge?: number | null;
+  priceFrom?: number | null;
+  priceCurrency?: string | null;
+  priceUnit?: string | null;
+  priceNotes?: string | null;
 };
 
 export type CreateResourceInput = ResourceBaseInput & {
@@ -57,13 +66,21 @@ export type UpdateResourceInput = {
   locationSlug?: string | null;
   locationSlugs?: string[];
   locationNames?: string[];
-  type?: ResourceTypeKey;
+  type?: WritableResourceTypeKey;
   title?: string;
   description?: string | null;
   month?: number | null;
   year?: number | null;
   active?: boolean;
   weekOptions?: number[];
+  validFrom?: Date | null;
+  validUntil?: Date | null;
+  minAge?: number | null;
+  maxAge?: number | null;
+  priceFrom?: number | null;
+  priceCurrency?: string | null;
+  priceUnit?: string | null;
+  priceNotes?: string | null;
   updatedById?: string | null;
 };
 
@@ -157,6 +174,14 @@ export type ResourceListItem = {
   description: string | null;
   month: number | null;
   year: number | null;
+  validFrom: Date | null;
+  validUntil: Date | null;
+  minAge: number | null;
+  maxAge: number | null;
+  priceFrom: number | null;
+  priceCurrency: string | null;
+  priceUnit: string | null;
+  priceNotes: string | null;
   active: boolean;
   weekOptions: number[];
   country: ResourceCountry;

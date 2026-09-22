@@ -1,6 +1,15 @@
 import { z } from 'zod';
 
-const RESOURCE_TYPES = ['QUOTE', 'INFO', 'BROCHURE', 'MANUAL', 'PRESENTATION'] as const;
+import {
+  optionalNullableCurrencySchema,
+  optionalNullableDateSchema,
+  optionalNullableIntSchema,
+  optionalNullableMoneySchema,
+  optionalNullableShortStringSchema,
+  validateResourceMetadata,
+  writableResourceTypeSchema,
+} from './resource-metadata.schemas.js';
+
 const STORAGE_PROVIDERS = ['S3', 'R2', 'SUPABASE'] as const;
 
 const optionalTrimmedStringSchema = z.preprocess((value) => {
@@ -93,13 +102,21 @@ export const createResourceBodySchema = z
     locationName: optionalTrimmedStringSchema,
     locationVenueName: optionalNullableTrimmedStringSchema,
     locationDescription: optionalNullableTrimmedStringSchema,
-    type: z.enum(RESOURCE_TYPES),
+    type: writableResourceTypeSchema,
     title: z.string().trim().min(1).max(255),
     description: optionalNullableTrimmedStringSchema,
     month: z.number().int().min(1).max(12).nullable().optional(),
     year: z.number().int().min(2000).max(2100).nullable().optional(),
     active: z.boolean().optional(),
     weekOptions: optionalWeekOptionsSchema,
+    validFrom: optionalNullableDateSchema,
+    validUntil: optionalNullableDateSchema,
+    minAge: optionalNullableIntSchema(0, 120),
+    maxAge: optionalNullableIntSchema(0, 120),
+    priceFrom: optionalNullableMoneySchema,
+    priceCurrency: optionalNullableCurrencySchema,
+    priceUnit: optionalNullableShortStringSchema(40),
+    priceNotes: optionalNullableShortStringSchema(500),
     initialVersion: initialVersionSchema,
   })
   .superRefine((value, ctx) => {
@@ -110,6 +127,7 @@ export const createResourceBodySchema = z
         message: 'year is required when month is provided',
       });
     }
+    validateResourceMetadata(value, ctx);
   })
   .transform(({
     countryCode,
@@ -129,6 +147,14 @@ export const createResourceBodySchema = z
     year,
     active,
     weekOptions,
+    validFrom,
+    validUntil,
+    minAge,
+    maxAge,
+    priceFrom,
+    priceCurrency,
+    priceUnit,
+    priceNotes,
     initialVersion,
   }) => ({
     countryCode: countryCode.trim().toUpperCase(),
@@ -148,5 +174,13 @@ export const createResourceBodySchema = z
     year: year ?? null,
     active: active ?? true,
     weekOptions,
+    validFrom: validFrom ?? null,
+    validUntil: validUntil ?? null,
+    minAge: minAge ?? null,
+    maxAge: maxAge ?? null,
+    priceFrom: priceFrom ?? null,
+    priceCurrency: priceCurrency ?? null,
+    priceUnit: priceUnit ?? null,
+    priceNotes: priceNotes ?? null,
     initialVersion: initialVersion ?? null,
   }));

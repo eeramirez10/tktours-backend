@@ -56,7 +56,9 @@ export type ListAvailableResourcesArgs = {
   familyKey?: 'CAMP' | 'LANGUAGE_COURSE' | 'SCHOOL_PROGRAM';
   locationSlug?: string;
   programSlug?: string;
-  type?: 'QUOTE' | 'INFO' | 'BROCHURE' | 'MANUAL' | 'PRESENTATION';
+  type?: 'BROCHURE' | 'MANUAL';
+  studentAge?: number;
+  targetDate?: string;
   activeOnly?: boolean;
 };
 

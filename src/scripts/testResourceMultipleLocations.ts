@@ -36,7 +36,7 @@ try {
     countryCode,
     countryName,
     locationNames: cityNames,
-    type: 'INFO',
+    type: 'MANUAL',
     title: `INLINE_DESTINATION_TEST_${suffix}`,
     description: null,
     month: null,

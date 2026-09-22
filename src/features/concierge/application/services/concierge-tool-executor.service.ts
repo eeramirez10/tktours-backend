@@ -1,4 +1,5 @@
 import { access } from 'node:fs/promises';
+import { Prisma } from '@prisma/client';
 
 import { CatalogRepository } from '../../../catalog/infrastructure/repositories/catalog.repository.js';
 import { PrismaInquiryRepository } from '../../../inquiries/infrastructure/repositories/prisma-inquiry.repository.js';
@@ -522,6 +523,26 @@ export class ConciergeToolExecutorService {
   }
 
   private async listAvailableResources(args: ListAvailableResourcesArgs) {
+    const studentAge = typeof args.studentAge === 'number' && Number.isFinite(args.studentAge)
+      ? Math.floor(args.studentAge)
+      : null;
+    const targetDate = this.parseResourceTargetDate(args.targetDate);
+    const compatibilityFilters: Prisma.ResourceWhereInput[] = [];
+
+    if (studentAge != null) {
+      compatibilityFilters.push(
+        { OR: [{ minAge: null }, { minAge: { lte: studentAge } }] },
+        { OR: [{ maxAge: null }, { maxAge: { gte: studentAge } }] },
+      );
+    }
+
+    if (targetDate) {
+      compatibilityFilters.push(
+        { OR: [{ validFrom: null }, { validFrom: { lte: targetDate } }] },
+        { OR: [{ validUntil: null }, { validUntil: { gte: targetDate } }] },
+      );
+    }
+
     const resources = await prisma.resource.findMany({
       where: {
         ...((args.activeOnly ?? true) ? { active: true } : {}),
@@ -530,6 +551,7 @@ export class ConciergeToolExecutorService {
         ...(args.locationSlug ? { locationAssignments: { some: { location: { slug: args.locationSlug } } } } : {}),
         ...(args.programSlug ? { program: { slug: args.programSlug } } : {}),
         ...(args.type ? { type: args.type } : {}),
+        ...(compatibilityFilters.length > 0 ? { AND: compatibilityFilters } : {}),
         versions: {
           some: {
             isCurrent: true,
@@ -549,6 +571,14 @@ export class ConciergeToolExecutorService {
         description: true,
         month: true,
         year: true,
+        validFrom: true,
+        validUntil: true,
+        minAge: true,
+        maxAge: true,
+        priceFrom: true,
+        priceCurrency: true,
+        priceUnit: true,
+        priceNotes: true,
         country: { select: { code: true, name: true } },
         family: { select: { key: true, name: true } },
         location: { select: { slug: true, name: true, venueName: true } },
@@ -625,6 +655,14 @@ export class ConciergeToolExecutorService {
         description: resource.description,
         month: resource.month,
         year: resource.year,
+        validFrom: resource.validFrom?.toISOString().slice(0, 10) ?? null,
+        validUntil: resource.validUntil?.toISOString().slice(0, 10) ?? null,
+        minAge: resource.minAge,
+        maxAge: resource.maxAge,
+        priceFrom: resource.priceFrom == null ? null : Number(resource.priceFrom),
+        priceCurrency: resource.priceCurrency,
+        priceUnit: resource.priceUnit,
+        priceNotes: resource.priceNotes,
         countryCode: resource.country.code,
         countryName: this.toSpanishCountryName(resource.country.code, resource.country.name),
         familyKey: resource.family?.key ?? null,
@@ -660,6 +698,12 @@ export class ConciergeToolExecutorService {
     } catch {
       return false;
     }
+  }
+
+  private parseResourceTargetDate(value: string | undefined): Date | null {
+    if (!value || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return null;
+    const parsed = new Date(`${value}T00:00:00.000Z`);
+    return Number.isNaN(parsed.getTime()) ? null : parsed;
   }
 
   private async listAvailableAccommodations(args: ListAvailableAccommodationsArgs) {

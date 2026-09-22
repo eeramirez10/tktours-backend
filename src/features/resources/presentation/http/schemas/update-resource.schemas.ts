@@ -1,6 +1,15 @@
 import { z } from 'zod';
 
-const RESOURCE_TYPES = ['QUOTE', 'INFO', 'BROCHURE', 'MANUAL', 'PRESENTATION'] as const;
+import {
+  optionalNullableCurrencySchema,
+  optionalNullableDateSchema,
+  optionalNullableIntSchema,
+  optionalNullableMoneySchema,
+  optionalNullableShortStringSchema,
+  validateResourceMetadata,
+  writableResourceTypeSchema,
+} from './resource-metadata.schemas.js';
+
 
 const optionalTrimmedStringSchema = z.preprocess((value) => {
   if (typeof value !== 'string') {
@@ -71,13 +80,21 @@ export const updateResourceBodySchema = z
     locationSlug: nullableTrimmedStringSchema,
     locationSlugs: optionalLocationSlugsSchema,
     locationNames: optionalLocationNamesSchema,
-    type: z.enum(RESOURCE_TYPES).optional(),
+    type: writableResourceTypeSchema.optional(),
     title: optionalTrimmedStringSchema,
     description: nullableTrimmedStringSchema,
     month: z.number().int().min(1).max(12).nullable().optional(),
     year: z.number().int().min(2000).max(2100).nullable().optional(),
     active: z.boolean().optional(),
     weekOptions: optionalWeekOptionsSchema,
+    validFrom: optionalNullableDateSchema,
+    validUntil: optionalNullableDateSchema,
+    minAge: optionalNullableIntSchema(0, 120),
+    maxAge: optionalNullableIntSchema(0, 120),
+    priceFrom: optionalNullableMoneySchema,
+    priceCurrency: optionalNullableCurrencySchema,
+    priceUnit: optionalNullableShortStringSchema(40),
+    priceNotes: optionalNullableShortStringSchema(500),
   })
   .superRefine((value, ctx) => {
     if (value.month != null && value.year === undefined) {
@@ -95,6 +112,7 @@ export const updateResourceBodySchema = z
         message: 'at least one field is required',
       });
     }
+    validateResourceMetadata(value, ctx);
   })
   .transform((value) => ({
     ...value,

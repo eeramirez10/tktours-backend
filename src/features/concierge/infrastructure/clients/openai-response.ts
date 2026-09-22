@@ -36,6 +36,7 @@ export class OpenAiResponsesClient {
     instructions: string;
     input: string | Array<Record<string, unknown>>;
     tools?: Array<Record<string, unknown>>;
+    text?: Record<string, unknown>;
     previousResponseId?: string;
     timeoutMs?: number;
   }): Promise<ResponsesTextResult> {
@@ -62,6 +63,7 @@ export class OpenAiResponsesClient {
           instructions: params.instructions,
           input: params.input as never,
           tools: params.tools as never,
+          text: params.text as never,
           previous_response_id: params.previousResponseId,
         },
         {

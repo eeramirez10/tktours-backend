@@ -1,6 +1,15 @@
 import { z } from 'zod';
 
-const RESOURCE_TYPES = ['QUOTE', 'INFO', 'BROCHURE', 'MANUAL', 'PRESENTATION'] as const;
+import {
+  optionalNullableCurrencySchema,
+  optionalNullableDateSchema,
+  optionalNullableIntSchema,
+  optionalNullableMoneySchema,
+  optionalNullableShortStringSchema,
+  validateResourceMetadata,
+  writableResourceTypeSchema,
+} from './resource-metadata.schemas.js';
+
 const STORAGE_PROVIDERS = ['S3', 'R2', 'SUPABASE'] as const;
 
 const optionalTrimmedStringSchema = z.preprocess((value) => {
@@ -127,13 +136,21 @@ export const uploadResourceBodySchema = z
     locationName: optionalTrimmedStringSchema,
     locationVenueName: optionalNullableTrimmedStringSchema,
     locationDescription: optionalNullableTrimmedStringSchema,
-    type: z.enum(RESOURCE_TYPES),
+    type: writableResourceTypeSchema,
     title: z.string().trim().min(1).max(255),
     description: optionalNullableTrimmedStringSchema,
     month: optionalIntStringSchema.pipe(z.number().int().min(1).max(12).optional()),
     year: optionalIntStringSchema.pipe(z.number().int().min(2000).max(2100).optional()),
     active: optionalBooleanStringSchema,
     weekOptions: optionalWeekOptionsSchema,
+    validFrom: optionalNullableDateSchema,
+    validUntil: optionalNullableDateSchema,
+    minAge: optionalNullableIntSchema(0, 120),
+    maxAge: optionalNullableIntSchema(0, 120),
+    priceFrom: optionalNullableMoneySchema,
+    priceCurrency: optionalNullableCurrencySchema,
+    priceUnit: optionalNullableShortStringSchema(40),
+    priceNotes: optionalNullableShortStringSchema(500),
     storageProvider: z.enum(STORAGE_PROVIDERS).optional(),
     extractText: optionalBooleanStringSchema,
   })
@@ -145,6 +162,7 @@ export const uploadResourceBodySchema = z
         message: 'year is required when month is provided',
       });
     }
+    validateResourceMetadata(value, ctx);
   })
   .transform((value) => ({
     countryCode: value.countryCode.trim().toUpperCase(),
@@ -164,6 +182,14 @@ export const uploadResourceBodySchema = z
     year: value.year ?? null,
     active: value.active ?? true,
     weekOptions: value.weekOptions,
+    validFrom: value.validFrom ?? null,
+    validUntil: value.validUntil ?? null,
+    minAge: value.minAge ?? null,
+    maxAge: value.maxAge ?? null,
+    priceFrom: value.priceFrom ?? null,
+    priceCurrency: value.priceCurrency ?? null,
+    priceUnit: value.priceUnit ?? null,
+    priceNotes: value.priceNotes ?? null,
     storageProvider: value.storageProvider ?? 'SUPABASE',
     extractText: value.extractText ?? true,
   }));

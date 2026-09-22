@@ -121,7 +121,7 @@ export const conciergeTools = [
     type: 'function',
     name: 'list_available_resources',
     description:
-      'List active PDFs/resources such as brochures, presentations or manuals for a country, city/location, program family, or program.',
+      'List active PDF brochures or manuals compatible with country, city/location, program, student age and target date.',
     parameters: {
       type: 'object',
       additionalProperties: false,
@@ -135,8 +135,10 @@ export const conciergeTools = [
         programSlug: { type: 'string' },
         type: {
           type: 'string',
-          enum: ['QUOTE', 'INFO', 'BROCHURE', 'MANUAL', 'PRESENTATION'],
+          enum: ['BROCHURE', 'MANUAL'],
         },
+        studentAge: { type: 'number' },
+        targetDate: { type: 'string', description: 'ISO date YYYY-MM-DD for the intended program start.' },
         activeOnly: { type: 'boolean' },
       },
       required: [],

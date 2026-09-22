@@ -12,6 +12,7 @@ publicResourceDownloadRoutes.get('/resources/:resourceId/versions/:versionId/dow
 resourcesRoutes.get('/resources/health', (req, res) => resourcesController.getHealth(req, res));
 resourcesRoutes.get('/resources/audit', (req, res, next) => resourcesController.auditResources(req, res, next));
 resourcesRoutes.get('/resources', (req, res, next) => resourcesController.listResources(req, res, next));
+resourcesRoutes.post('/resources/analyze', uploadResourcePdf, (req, res, next) => resourcesController.analyzeDocument(req, res, next));
 resourcesRoutes.post('/resources/upload', uploadResourcePdf, (req, res, next) => resourcesController.uploadResource(req, res, next));
 resourcesRoutes.get('/resources/:resourceId', (req, res, next) => resourcesController.getResourceById(req, res, next));
 resourcesRoutes.post('/resources', (req, res, next) => resourcesController.createResource(req, res, next));

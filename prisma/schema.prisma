@@ -302,6 +302,14 @@ model Resource {
   description     String?
   month           Int?
   year            Int?
+  validFrom       DateTime?              @db.Date
+  validUntil      DateTime?              @db.Date
+  minAge          Int?
+  maxAge          Int?
+  priceFrom       Decimal?               @db.Decimal(12, 2)
+  priceCurrency   String?                @db.VarChar(3)
+  priceUnit       String?                @db.VarChar(40)
+  priceNotes      String?
   active          Boolean                @default(true)
   createdById     String? @db.Uuid
   updatedById     String? @db.Uuid
@@ -323,6 +331,8 @@ model Resource {
   @@index([programId])
   @@index([locationId])
   @@index([month, year])
+  @@index([validFrom, validUntil])
+  @@index([minAge, maxAge])
 }
 
 model ResourceLocationAssignment {

@@ -36,6 +36,14 @@ type CampBrochureCandidate = {
   fileName: string;
   fileUrl: string;
   mimeType: string | null;
+  validFrom: string | null;
+  validUntil: string | null;
+  minAge: number | null;
+  maxAge: number | null;
+  priceFrom: number | null;
+  priceCurrency: string | null;
+  priceUnit: string | null;
+  priceNotes: string | null;
 };
 
 type CircuitResourceCandidate = CampBrochureCandidate & {
@@ -1060,6 +1068,14 @@ export class ConciergeOrchestratorService {
       fileName,
       fileUrl: this.toPublicUrl(fileUrl),
       mimeType: this.asNonEmptyStringValue(payload.mimeType),
+      validFrom: this.asNonEmptyStringValue(payload.validFrom),
+      validUntil: this.asNonEmptyStringValue(payload.validUntil),
+      minAge: this.asFiniteNumberValue(payload.minAge),
+      maxAge: this.asFiniteNumberValue(payload.maxAge),
+      priceFrom: this.asFiniteNumberValue(payload.priceFrom),
+      priceCurrency: this.asNonEmptyStringValue(payload.priceCurrency),
+      priceUnit: this.asNonEmptyStringValue(payload.priceUnit),
+      priceNotes: this.asNonEmptyStringValue(payload.priceNotes),
     };
   }
 
@@ -1082,10 +1098,16 @@ export class ConciergeOrchestratorService {
     }
 
     const locationSlug = inquiry.location?.slug ?? undefined;
+    const studentAge = typeof inquiry.studentAge === 'number' && Number.isFinite(inquiry.studentAge)
+      ? inquiry.studentAge
+      : undefined;
+    const targetDate = this.getInquiryTargetDate(inquiry) ?? undefined;
     const byLocation = locationSlug
       ? await this.queryCampBrochureResources({
           countryCode,
           locationSlug,
+          studentAge,
+          targetDate,
         })
       : [];
 
@@ -1099,6 +1121,8 @@ export class ConciergeOrchestratorService {
 
     const byCountry = await this.queryCampBrochureResources({
       countryCode,
+      studentAge,
+      targetDate,
     });
 
     const countryCandidates = byCountry
@@ -1111,6 +1135,8 @@ export class ConciergeOrchestratorService {
   private async queryCampBrochureResources(input: {
     countryCode: string;
     locationSlug?: string;
+    studentAge?: number;
+    targetDate?: string;
   }): Promise<Array<Record<string, unknown>>> {
     const result = await this.toolExecutor.execute('list_available_resources', {
       activeOnly: true,
@@ -1118,6 +1144,8 @@ export class ConciergeOrchestratorService {
       type: 'BROCHURE',
       countryCode: input.countryCode,
       ...(input.locationSlug ? { locationSlug: input.locationSlug } : {}),
+      ...(input.studentAge != null ? { studentAge: input.studentAge } : {}),
+      ...(input.targetDate ? { targetDate: input.targetDate } : {}),
     });
 
     if (!result || typeof result !== 'object') {
@@ -1187,6 +1215,14 @@ export class ConciergeOrchestratorService {
       fileName,
       fileUrl: this.toPublicUrl(fileUrl),
       mimeType: this.asNonEmptyStringValue((version as Record<string, unknown>).mimeType),
+      validFrom: this.asNonEmptyStringValue(resource.validFrom),
+      validUntil: this.asNonEmptyStringValue(resource.validUntil),
+      minAge: this.asFiniteNumberValue(resource.minAge),
+      maxAge: this.asFiniteNumberValue(resource.maxAge),
+      priceFrom: this.asFiniteNumberValue(resource.priceFrom),
+      priceCurrency: this.asNonEmptyStringValue(resource.priceCurrency),
+      priceUnit: this.asNonEmptyStringValue(resource.priceUnit),
+      priceNotes: this.asNonEmptyStringValue(resource.priceNotes),
     };
   }
 
@@ -1194,6 +1230,35 @@ export class ConciergeOrchestratorService {
     if (typeof value !== 'string') return null;
     const normalized = value.trim();
     return normalized.length > 0 ? normalized : null;
+  }
+
+  private asFiniteNumberValue(value: unknown): number | null {
+    return typeof value === 'number' && Number.isFinite(value) ? value : null;
+  }
+
+  private getInquiryTargetDate(inquiry: ConciergeTurnContext['activeInquiry']): string | null {
+    const month = inquiry?.preferredStartMonth;
+    const year = inquiry?.preferredStartYear;
+    if (typeof month !== 'number' || typeof year !== 'number' || month < 1 || month > 12) {
+      return null;
+    }
+    return `${String(year).padStart(4, '0')}-${String(month).padStart(2, '0')}-01`;
+  }
+
+  private getLowestCampBrochurePriceText(candidates: CampBrochureCandidate[]): string | null {
+    const firstPriced = candidates.find((candidate) => candidate.priceFrom != null && candidate.priceCurrency);
+    if (!firstPriced?.priceCurrency || firstPriced.priceFrom == null) return null;
+
+    const comparable = candidates.filter(
+      (candidate) => candidate.priceFrom != null && candidate.priceCurrency === firstPriced.priceCurrency,
+    );
+    const lowest = comparable.reduce(
+      (selected, candidate) => candidate.priceFrom! < selected.priceFrom! ? candidate : selected,
+      firstPriced,
+    );
+    const amount = new Intl.NumberFormat('es-MX', { maximumFractionDigits: 2 }).format(lowest.priceFrom!);
+    const unit = lowest.priceUnit ? ` por ${lowest.priceUnit}` : '';
+    return `desde ${amount} ${lowest.priceCurrency}${unit}`;
   }
 
   private toPublicUrl(pathOrUrl: string): string {
@@ -1401,6 +1466,14 @@ export class ConciergeOrchestratorService {
     if (!state || state.candidates.length === 0) return false;
     if (state.status === 'OFFERED' || state.status === 'SENT' || state.status === 'DECLINED') return false;
     if (nextField === 'country' || nextField === 'studentAge' || nextField === 'family') return false;
+    const needsTargetDate = state.candidates.some((candidate) => candidate.validFrom || candidate.validUntil);
+    if (
+      needsTargetDate
+      && !this.getInquiryTargetDate(context.activeInquiry)
+      && this.getPreferredStartStatusFromInquiry(context.activeInquiry) !== 'UNDECIDED'
+    ) {
+      return false;
+    }
     return true;
   }
 
@@ -1410,12 +1483,13 @@ export class ConciergeOrchestratorService {
   }): Promise<string> {
     const countryName = params.candidates[0]?.countryName ?? 'este país';
     const seasonLabels = this.getCampBrochureSeasonLabels(params.candidates);
+    const priceText = this.getLowestCampBrochurePriceText(params.candidates);
     const fallback =
       seasonLabels.length > 1
-        ? `Tengo folletos disponibles para ${countryName} en estas temporadas: ${seasonLabels.join(', ')} 😊. ¿Cuál te gustaría que te comparta?`
+        ? `Tengo folletos disponibles para ${countryName} en estas temporadas: ${seasonLabels.join(', ')}${priceText ? `, con opciones ${priceText}` : ''} 😊. ¿Cuál te gustaría que te comparta?`
         : seasonLabels.length > 0
-        ? `Tengo un folleto disponible para ${countryName} en ${seasonLabels.join(', ')} 😊. ¿Quieres que te lo comparta ahora?`
-        : `Tengo folletos disponibles para ${countryName} 😊. ¿Quieres que te los comparta ahora?`;
+        ? `Tengo un folleto disponible para ${countryName} en ${seasonLabels.join(', ')}${priceText ? `, ${priceText}` : ''} 😊. ¿Quieres que te lo comparta ahora?`
+        : `Tengo folletos disponibles para ${countryName}${priceText ? `, ${priceText}` : ''} 😊. ¿Quieres que te los comparta ahora?`;
     try {
       const instructions = [
         'Eres un concierge comercial de TKTours.',
@@ -1424,6 +1498,8 @@ export class ConciergeOrchestratorService {
         'Si hay temporadas disponibles, menciónalas de forma clara y natural usando verano, Semana Santa e invierno.',
         'Si hay más de una temporada disponible, pide al usuario que elija cuál quiere recibir.',
         'Si solo hay una temporada, termina con una pregunta de confirmación para enviarlo.',
+        'Cuando alguno de los folletos incluya precio, debes mencionarlo usando siempre la palabra "desde", el importe y la moneda exactos.',
+        'No inventes, conviertas ni calcules precios.',
         'No menciones procesos internos ni herramientas.',
         'No uses formato JSON.',
       ].join('\n');
@@ -1438,6 +1514,10 @@ export class ConciergeOrchestratorService {
             title: candidate.resourceTitle,
             season: this.getPrimarySeasonKey(candidate.seasonKeys),
             locationName: candidate.locationName,
+            priceFrom: candidate.priceFrom,
+            priceCurrency: candidate.priceCurrency,
+            priceUnit: candidate.priceUnit,
+            priceNotes: candidate.priceNotes,
           })),
           latestUserMessage: params.context.latestMessage?.text ?? null,
         }),

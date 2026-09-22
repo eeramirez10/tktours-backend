@@ -5,6 +5,7 @@ import { ZodError } from 'zod';
 
 import { NotFoundAppError, UnauthorizedAppError, ValidationAppError } from '../../../../../shared/domain/errors/app-error.js';
 import { ResourceExtractionService } from '../../../application/services/resource-extraction.service.js';
+import { ResourceDocumentAnalysisService } from '../../../application/services/resource-document-analysis.service.js';
 import { CreateResourceUseCase } from '../../../application/use-cases/create-resource.use-case.js';
 import { CreateResourceVersionUseCase } from '../../../application/use-cases/create-resource-version.use-case.js';
 import { AuditResourcesUseCase } from '../../../application/use-cases/audit-resources.use-case.js';
@@ -23,10 +24,12 @@ import { resourceDownloadParamsSchema, resourceIdParamsSchema } from '../schemas
 import { listResourcesQuerySchema } from '../schemas/resources-query.schemas.js';
 import { setResourceActiveBodySchema, updateResourceBodySchema } from '../schemas/update-resource.schemas.js';
 import { uploadResourceBodySchema, uploadResourceVersionBodySchema } from '../schemas/upload-resource.schemas.js';
+import { analyzeResourceDocumentBodySchema } from '../schemas/analyze-resource-document.schemas.js';
 
 const resourceRepository = new ResourceRepository();
 const storageService = new LocalResourceStorageService();
 const extractionService = new ResourceExtractionService(storageService);
+const documentAnalysisService = new ResourceDocumentAnalysisService();
 const getResourcesHealthUseCase = new GetResourcesHealthUseCase();
 const listResourcesUseCase = new ListResourcesUseCase(resourceRepository);
 const getResourceByIdUseCase = new GetResourceByIdUseCase(resourceRepository);
@@ -158,6 +161,14 @@ export class ResourcesController {
         year: body.year,
         active: body.active,
         weekOptions: body.weekOptions,
+        validFrom: body.validFrom,
+        validUntil: body.validUntil,
+        minAge: body.minAge,
+        maxAge: body.maxAge,
+        priceFrom: body.priceFrom,
+        priceCurrency: body.priceCurrency,
+        priceUnit: body.priceUnit,
+        priceNotes: body.priceNotes,
         createdById: getAuthenticatedAdminId(req),
         initialVersion: {
           sourceType: 'UPLOAD',
@@ -178,6 +189,27 @@ export class ResourcesController {
       });
     } catch (error) {
       return next(error instanceof ZodError ? toValidationError(error, 'Invalid upload resource body') : error);
+    }
+  }
+
+  async analyzeDocument(req: Request, res: Response, next: NextFunction) {
+    try {
+      if (!req.file) {
+        return next(new ValidationAppError('PDF file is required in field "file"'));
+      }
+
+      assertPdfContent(req.file);
+      const body = analyzeResourceDocumentBodySchema.parse(req.body);
+      const data = await documentAnalysisService.analyze({
+        fileName: req.file.originalname,
+        content: req.file.buffer,
+        requestedFamilyKey: body.familyKey,
+        resourceType: body.type,
+      });
+
+      return res.json({ ok: true, data });
+    } catch (error) {
+      return next(error instanceof ZodError ? toValidationError(error, 'Invalid document analysis body') : error);
     }
   }
 

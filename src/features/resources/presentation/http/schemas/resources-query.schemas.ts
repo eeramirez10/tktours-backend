@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-const RESOURCE_TYPES = ['QUOTE', 'INFO', 'BROCHURE', 'MANUAL', 'PRESENTATION'] as const;
+const RESOURCE_TYPES = ['BROCHURE', 'MANUAL'] as const;
 
 function getFirstQueryValue(value: unknown) {
   return Array.isArray(value) ? value[0] : value;
