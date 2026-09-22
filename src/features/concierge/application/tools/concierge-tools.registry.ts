@@ -146,6 +146,23 @@ export const conciergeTools = [
   },
   {
     type: 'function',
+    name: 'search_resource_content',
+    description:
+      'Search extracted PDF text for factual answers about a brochure or manual. Always use the active inquiryId and the customer question. Results are restricted to resources compatible with that inquiry.',
+    parameters: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        inquiryId: { type: 'string' },
+        query: { type: 'string' },
+        resourceId: { type: 'string' },
+        limit: { type: 'number', minimum: 1, maximum: 8 },
+      },
+      required: ['inquiryId', 'query'],
+    },
+  },
+  {
+    type: 'function',
     name: 'list_available_accommodations',
     description:
       'List active accommodation options from catalog rules, optionally filtered by country, family, and student age.',

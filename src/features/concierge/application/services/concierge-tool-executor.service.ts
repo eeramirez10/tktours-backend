@@ -18,6 +18,7 @@ import {
   ListAvailableLocationsArgs,
   ListAvailableProgramsArgs,
   ListAvailableResourcesArgs,
+  SearchResourceContentArgs,
   ListWeeksOptionsArgs,
   UpdateInquiryArgs,
 } from '../../domain/types/concierge-tool.types.js';
@@ -123,6 +124,8 @@ export class ConciergeToolExecutorService {
         return this.listAvailablePrograms(args as ListAvailableProgramsArgs);
       case 'list_available_resources':
         return this.listAvailableResources(args as ListAvailableResourcesArgs);
+      case 'search_resource_content':
+        return this.searchResourceContent(args as SearchResourceContentArgs);
       case 'list_available_accommodations':
         return this.listAvailableAccommodations(args as ListAvailableAccommodationsArgs);
       case 'list_weeks_options':
@@ -704,6 +707,185 @@ export class ConciergeToolExecutorService {
     if (!value || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return null;
     const parsed = new Date(`${value}T00:00:00.000Z`);
     return Number.isNaN(parsed.getTime()) ? null : parsed;
+  }
+
+  private async searchResourceContent(args: SearchResourceContentArgs) {
+    const inquiryId = typeof args.inquiryId === 'string' ? args.inquiryId.trim() : '';
+    const query = typeof args.query === 'string' ? args.query.trim() : '';
+    const limit = typeof args.limit === 'number' && Number.isFinite(args.limit)
+      ? Math.min(8, Math.max(1, Math.floor(args.limit)))
+      : 5;
+
+    if (!inquiryId || !query) {
+      return { matches: [], reason: 'inquiryId and query are required' };
+    }
+
+    const inquiry = await prisma.inquiry.findUnique({
+      where: { id: inquiryId },
+      select: {
+        countryId: true,
+        familyId: true,
+        locationId: true,
+        programId: true,
+        studentAge: true,
+        preferredStartMonth: true,
+        preferredStartYear: true,
+        resourceSends: { select: { resourceId: true } },
+      },
+    });
+
+    if (!inquiry) {
+      return { matches: [], reason: 'active inquiry was not found' };
+    }
+
+    if (!inquiry.countryId && inquiry.resourceSends.length === 0) {
+      return { matches: [], reason: 'the inquiry does not identify a destination or previously sent resource' };
+    }
+
+    const targetDate = inquiry.preferredStartMonth && inquiry.preferredStartYear
+      ? new Date(Date.UTC(inquiry.preferredStartYear, inquiry.preferredStartMonth - 1, 1))
+      : null;
+    const resourceFilters: Prisma.ResourceWhereInput[] = [];
+
+    if (inquiry.studentAge != null) {
+      resourceFilters.push(
+        { OR: [{ minAge: null }, { minAge: { lte: inquiry.studentAge } }] },
+        { OR: [{ maxAge: null }, { maxAge: { gte: inquiry.studentAge } }] },
+      );
+    }
+    if (targetDate) {
+      resourceFilters.push(
+        { OR: [{ validFrom: null }, { validFrom: { lte: targetDate } }] },
+        { OR: [{ validUntil: null }, { validUntil: { gte: targetDate } }] },
+      );
+    }
+
+    const resourceId = typeof args.resourceId === 'string' && this.isUuid(args.resourceId.trim())
+      ? args.resourceId.trim()
+      : null;
+    const sentResourceIds = inquiry.resourceSends.map((send) => send.resourceId);
+    const resourceWhere: Prisma.ResourceWhereInput = {
+      active: true,
+      ...(resourceId
+        ? { id: resourceId }
+        : !inquiry.countryId
+          ? { id: { in: sentResourceIds } }
+          : {}),
+      ...(inquiry.countryId ? { countryId: inquiry.countryId } : {}),
+      ...(inquiry.familyId ? { familyId: inquiry.familyId } : {}),
+      ...(inquiry.programId ? { programId: inquiry.programId } : {}),
+      ...(inquiry.locationId
+        ? { locationAssignments: { some: { locationId: inquiry.locationId } } }
+        : {}),
+      ...(resourceFilters.length > 0 ? { AND: resourceFilters } : {}),
+    };
+    const terms = this.extractResourceSearchTerms(query);
+
+    const chunks = await prisma.resourceChunk.findMany({
+      where: {
+        extraction: {
+          status: 'DONE',
+          resourceVersion: {
+            isCurrent: true,
+            resource: resourceWhere,
+          },
+        },
+        OR: terms.map((term) => ({ content: { contains: term, mode: 'insensitive' as const } })),
+      },
+      select: {
+        chunkIndex: true,
+        content: true,
+        extraction: {
+          select: {
+            resourceVersion: {
+              select: {
+                resource: {
+                  select: {
+                    id: true,
+                    title: true,
+                    description: true,
+                    country: { select: { code: true, name: true } },
+                    program: { select: { slug: true, name: true } },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+      take: 60,
+    });
+
+    const sentResourceIdSet = new Set(sentResourceIds);
+    const matches = chunks
+      .map((chunk) => {
+        const resource = chunk.extraction.resourceVersion.resource;
+        const normalizedContent = this.normalizeSearchText(chunk.content);
+        const normalizedTitle = this.normalizeSearchText(resource.title);
+        const lexicalScore = terms.reduce((score, term) => {
+          const normalizedTerm = this.normalizeSearchText(term);
+          return score
+            + (normalizedContent.includes(normalizedTerm) ? 2 : 0)
+            + (normalizedTitle.includes(normalizedTerm) ? 3 : 0);
+        }, 0);
+
+        return {
+          resourceId: resource.id,
+          resourceTitle: resource.title,
+          countryCode: resource.country.code,
+          countryName: resource.country.name,
+          programSlug: resource.program?.slug ?? null,
+          programName: resource.program?.name ?? null,
+          description: resource.description,
+          chunkIndex: chunk.chunkIndex,
+          excerpt: this.compactResourceExcerpt(chunk.content),
+          wasSentToCustomer: sentResourceIdSet.has(resource.id),
+          score: lexicalScore + (sentResourceIdSet.has(resource.id) ? 5 : 0),
+        };
+      })
+      .sort((left, right) => right.score - left.score || left.chunkIndex - right.chunkIndex)
+      .slice(0, limit);
+
+    return {
+      query,
+      matches,
+      answerPolicy: matches.length > 0
+        ? 'Answer in Spanish using only these excerpts. Paraphrase and do not claim details absent from them.'
+        : 'Do not invent an answer. Say the brochure does not confirm that detail and offer advisor follow-up.',
+    };
+  }
+
+  private extractResourceSearchTerms(query: string): string[] {
+    const stopWords = new Set([
+      'para', 'como', 'cual', 'cuales', 'cuando', 'donde', 'desde', 'hasta', 'este', 'esta', 'estos',
+      'estas', 'tiene', 'incluye', 'sobre', 'quiero', 'saber', 'puede', 'puedo', 'folleto', 'archivo',
+    ]);
+    const originalTerms = query.toLocaleLowerCase('es')
+      .replace(/[^\p{L}\p{N}]+/gu, ' ')
+      .split(/\s+/)
+      .filter((term) => term.length >= 3 && !stopWords.has(this.normalizeSearchText(term)));
+    const terms = originalTerms.flatMap((term) => {
+      const normalized = this.normalizeSearchText(term);
+      return normalized !== term ? [term, normalized] : [term];
+    });
+    const unique = Array.from(new Set(terms)).slice(0, 10);
+    return unique.length > 0 ? unique : [query.slice(0, 120)];
+  }
+
+  private normalizeSearchText(value: string): string {
+    return value
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .toLocaleLowerCase('es');
+  }
+
+  private compactResourceExcerpt(value: string): string {
+    const compact = value.replace(/\s+/g, ' ').trim();
+    return compact.length <= 1400 ? compact : `${compact.slice(0, 1400).trim()}...`;
+  }
+
+  private isUuid(value: string): boolean {
+    return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
   }
 
   private async listAvailableAccommodations(args: ListAvailableAccommodationsArgs) {

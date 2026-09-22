@@ -200,7 +200,9 @@ export class ConciergeOrchestratorService {
       }
 
       const parsed = this.parseStructuredResponse(finalText);
-      const policyResult = await this.applyReplyPolicy(parsed, context);
+      const policyResult = await this.applyReplyPolicy(parsed, context, {
+        resourceContentSearchUsed: functionCalls.some((call) => call.type === 'function_call' && call.name === 'search_resource_content'),
+      });
       const normalized = policyResult.structured;
 
       const persistedConversation = await this.persistAssistantTurn({
@@ -587,6 +589,7 @@ export class ConciergeOrchestratorService {
   private async applyReplyPolicy(
     parsed: ReturnType<ConciergeOrchestratorService['parseStructuredResponse']>,
     context: ConciergeTurnContext,
+    options: { resourceContentSearchUsed: boolean },
   ): Promise<{
     structured: ReturnType<ConciergeOrchestratorService['parseStructuredResponse']>;
     trace: {
@@ -807,6 +810,20 @@ export class ConciergeOrchestratorService {
           checkedAt: nowIso,
         },
       });
+    }
+
+    if (options.resourceContentSearchUsed) {
+      return {
+        structured: {
+          ...parsed,
+          shouldRefreshRecommendations: false,
+        },
+        trace: {
+          strategy: 'none',
+          details: { reason: 'resource_content_answer' },
+        },
+        contextPatch,
+      };
     }
 
     if (this.shouldOfferCampBrochure(context, nextField, campBrochureState)) {

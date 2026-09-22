@@ -152,7 +152,6 @@ export const uploadResourceBodySchema = z
     priceUnit: optionalNullableShortStringSchema(40),
     priceNotes: optionalNullableShortStringSchema(500),
     storageProvider: z.enum(STORAGE_PROVIDERS).optional(),
-    extractText: optionalBooleanStringSchema,
   })
   .superRefine((value, ctx) => {
     if (value.month != null && value.year == null) {
@@ -191,15 +190,12 @@ export const uploadResourceBodySchema = z
     priceUnit: value.priceUnit ?? null,
     priceNotes: value.priceNotes ?? null,
     storageProvider: value.storageProvider ?? 'SUPABASE',
-    extractText: value.extractText ?? true,
   }));
 
 export const uploadResourceVersionBodySchema = z
   .object({
     storageProvider: z.enum(STORAGE_PROVIDERS).optional(),
-    extractText: optionalBooleanStringSchema,
   })
   .transform((value) => ({
     storageProvider: value.storageProvider ?? 'SUPABASE',
-    extractText: value.extractText ?? true,
   }));

@@ -127,8 +127,12 @@ export class ResourcesController {
     try {
       const body = createResourceBodySchema.parse(req.body);
       const data = await createResourceUseCase.execute({ ...body, createdById: getAuthenticatedAdminId(req) });
+      const extraction = body.initialVersion?.sourceType === 'UPLOAD'
+        ? await extractionService.extractCurrentVersion(data.id)
+        : null;
+      const refreshed = extraction ? await getResourceByIdUseCase.execute(data.id) : null;
 
-      return res.status(201).json({ ok: true, data });
+      return res.status(201).json({ ok: true, data: refreshed ?? data, extraction });
     } catch (error) {
       return next(error instanceof ZodError ? toValidationError(error, 'Invalid create resource body') : error);
     }
@@ -179,7 +183,7 @@ export class ResourcesController {
         },
       });
 
-      const extraction = body.extractText ? await extractionService.extractCurrentVersion(data.id) : null;
+      const extraction = await extractionService.extractCurrentVersion(data.id);
       const refreshed = await getResourceByIdUseCase.execute(data.id);
 
       return res.status(201).json({
@@ -254,8 +258,12 @@ export class ResourcesController {
         uploadedById: getAuthenticatedAdminId(req),
         version: body,
       });
+      const extraction = body.sourceType === 'UPLOAD' && data.currentVersion?.id
+        ? await extractionService.extractVersion(data.currentVersion.id)
+        : null;
+      const refreshed = extraction ? await getResourceByIdUseCase.execute(resourceId) : null;
 
-      return res.status(201).json({ ok: true, data });
+      return res.status(201).json({ ok: true, data: refreshed ?? data, extraction });
     } catch (error) {
       return next(error instanceof ZodError ? toValidationError(error, 'Invalid create version body') : error);
     }
@@ -283,10 +291,9 @@ export class ResourcesController {
         },
       });
 
-      const extraction =
-        body.extractText && data.currentVersion?.id
-          ? await extractionService.extractVersion(data.currentVersion.id)
-          : null;
+      const extraction = data.currentVersion?.id
+        ? await extractionService.extractVersion(data.currentVersion.id)
+        : null;
       const refreshed = await getResourceByIdUseCase.execute(resourceId);
 
       return res.status(201).json({

@@ -9,6 +9,7 @@ export type ConciergeToolName =
   | 'list_available_locations'
   | 'list_available_programs'
   | 'list_available_resources'
+  | 'search_resource_content'
   | 'list_available_accommodations'
   | 'list_weeks_options'
   | 'extract_inquiry_fields';
@@ -60,6 +61,13 @@ export type ListAvailableResourcesArgs = {
   studentAge?: number;
   targetDate?: string;
   activeOnly?: boolean;
+};
+
+export type SearchResourceContentArgs = {
+  inquiryId: string;
+  query: string;
+  resourceId?: string;
+  limit?: number;
 };
 
 export type ListAvailableAccommodationsArgs = {
