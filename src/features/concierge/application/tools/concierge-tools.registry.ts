@@ -184,7 +184,7 @@ export const conciergeTools = [
   {
     type: 'function',
     name: 'list_weeks_options',
-    description: 'List allowed study duration options in weeks from catalog rules.',
+    description: 'Obtiene el rango mínimo y máximo de duración en semanas desde las reglas del catálogo.',
     parameters: {
       type: 'object',
       additionalProperties: false,

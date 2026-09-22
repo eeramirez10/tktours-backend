@@ -15,7 +15,8 @@ const analysisSchema = z.object({
   validUntil: z.iso.date().nullable(),
   minAge: z.number().int().min(0).max(120).nullable(),
   maxAge: z.number().int().min(0).max(120).nullable(),
-  weekOptions: z.array(z.number().int().min(1).max(104)).max(52),
+  minWeeks: z.number().int().min(1).max(104).nullable(),
+  maxWeeks: z.number().int().min(1).max(104).nullable(),
   priceFrom: z.number().finite().nonnegative().nullable(),
   priceCurrency: z.string().trim().length(3).nullable(),
   priceUnit: z.string().trim().max(40).nullable(),
@@ -40,7 +41,8 @@ const analysisJsonSchema = {
     validUntil: { type: ['string', 'null'] },
     minAge: { type: ['integer', 'null'] },
     maxAge: { type: ['integer', 'null'] },
-    weekOptions: { type: 'array', items: { type: 'integer', minimum: 1, maximum: 104 }, maxItems: 52 },
+    minWeeks: { type: ['integer', 'null'], minimum: 1, maximum: 104 },
+    maxWeeks: { type: ['integer', 'null'], minimum: 1, maximum: 104 },
     priceFrom: { type: ['number', 'null'] },
     priceCurrency: { type: ['string', 'null'] },
     priceUnit: { type: ['string', 'null'] },
@@ -49,7 +51,7 @@ const analysisJsonSchema = {
   },
   required: [
     'suggestedTitle', 'programName', 'summary', 'familyKey', 'countryCode', 'countryName', 'cities',
-    'validFrom', 'validUntil', 'minAge', 'maxAge', 'weekOptions', 'priceFrom', 'priceCurrency',
+    'validFrom', 'validUntil', 'minAge', 'maxAge', 'minWeeks', 'maxWeeks', 'priceFrom', 'priceCurrency',
     'priceUnit', 'priceNotes', 'confidence',
   ],
 } as const;
@@ -71,7 +73,7 @@ export class ResourceDocumentAnalysisService {
         'cities contiene ciudades o sedes del país del programa, sin duplicados.',
         'validFrom y validUntil usan YYYY-MM-DD y representan la vigencia real del folleto o sus fechas operativas globales.',
         'minAge y maxAge representan el rango global aceptado por el recurso.',
-        'weekOptions contiene todas las duraciones explícitas disponibles expresadas en semanas. Convierte rangos como 2 a 8 semanas en [2,3,4,5,6,7,8]. No conviertas días o meses si la equivalencia no es explícita.',
+        'minWeeks y maxWeeks representan el rango global de duración explícito en semanas. Para "2 a 8 semanas" devuelve 2 y 8; para una duración única devuelve el mismo valor en ambos campos. No conviertas días o meses si la equivalencia no es explícita.',
         'priceFrom es el menor precio base explícito aplicable al programa; no sumes cargos ni conviertas monedas.',
         'priceCurrency debe ser un código ISO 4217 de tres letras. priceUnit debe ser una etiqueta breve como programa, semana o paquete.',
         'Solo conserva precio cuando el documento corresponda claramente a CAMP y sea un folleto. Para cualquier otro documento devuelve campos de precio en null.',
@@ -138,6 +140,8 @@ export class ResourceDocumentAnalysisService {
   private normalize(value: ResourceDocumentAnalysis): ResourceDocumentAnalysis {
     const minAge = value.minAge;
     const maxAge = value.maxAge;
+    const minWeeks = value.minWeeks;
+    const maxWeeks = value.maxWeeks;
     const validFrom = value.validFrom;
     const validUntil = value.validUntil;
 
@@ -146,7 +150,8 @@ export class ResourceDocumentAnalysisService {
       countryCode: value.countryCode?.toUpperCase() ?? null,
       priceCurrency: value.priceCurrency?.toUpperCase() ?? null,
       cities: Array.from(new Set(value.cities.map((city) => city.trim()).filter(Boolean))),
-      weekOptions: Array.from(new Set(value.weekOptions)).sort((left, right) => left - right),
+      minWeeks: minWeeks != null && maxWeeks != null ? Math.min(minWeeks, maxWeeks) : minWeeks,
+      maxWeeks: minWeeks != null && maxWeeks != null ? Math.max(minWeeks, maxWeeks) : maxWeeks,
       minAge: minAge != null && maxAge != null ? Math.min(minAge, maxAge) : minAge,
       maxAge: minAge != null && maxAge != null ? Math.max(minAge, maxAge) : maxAge,
       validFrom: validFrom && validUntil && validFrom > validUntil ? validUntil : validFrom,

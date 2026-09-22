@@ -62,38 +62,6 @@ const optionalIntStringSchema = z.preprocess((value) => {
   return value;
 }, z.number().int().optional());
 
-const optionalWeekOptionsSchema = z.preprocess((value) => {
-  if (value === undefined || value === null || value === '') {
-    return undefined;
-  }
-
-  if (Array.isArray(value)) {
-    return value;
-  }
-
-  if (typeof value === 'string') {
-    const trimmed = value.trim();
-    if (trimmed === '') {
-      return undefined;
-    }
-
-    try {
-      const parsed = JSON.parse(trimmed);
-      if (Array.isArray(parsed)) {
-        return parsed;
-      }
-    } catch {
-      return trimmed
-        .split(',')
-        .map((item) => Number(item.trim()))
-        .filter((item) => Number.isFinite(item));
-    }
-  }
-
-  return value;
-}, z.array(z.number().int().min(1).max(104)).max(52).optional())
-  .transform((value) => (value ? Array.from(new Set(value)).sort((a, b) => a - b) : undefined));
-
 const optionalLocationSlugsSchema = z.preprocess((value) => {
   if (value === undefined || value === null || value === '') return undefined;
   if (Array.isArray(value)) return value;
@@ -142,7 +110,8 @@ export const uploadResourceBodySchema = z
     month: optionalIntStringSchema.pipe(z.number().int().min(1).max(12).optional()),
     year: optionalIntStringSchema.pipe(z.number().int().min(2000).max(2100).optional()),
     active: optionalBooleanStringSchema,
-    weekOptions: optionalWeekOptionsSchema,
+    minWeeks: optionalNullableIntSchema(1, 104),
+    maxWeeks: optionalNullableIntSchema(1, 104),
     validFrom: optionalNullableDateSchema,
     validUntil: optionalNullableDateSchema,
     minAge: optionalNullableIntSchema(0, 120),
@@ -180,7 +149,8 @@ export const uploadResourceBodySchema = z
     month: value.month ?? null,
     year: value.year ?? null,
     active: value.active ?? true,
-    weekOptions: value.weekOptions,
+    minWeeks: value.minWeeks,
+    maxWeeks: value.maxWeeks,
     validFrom: value.validFrom ?? null,
     validUntil: value.validUntil ?? null,
     minAge: value.minAge ?? null,

@@ -959,30 +959,27 @@ export class ConciergeToolExecutorService {
 
     const filteredPrograms = args.programSlug ? programs.filter((program) => program.slug === args.programSlug) : programs;
 
-    const minCandidates = filteredPrograms
-      .map((program) => program.minWeeks)
+    const programRanges = filteredPrograms.map((program) => {
+      const legacyOptions = Array.isArray(program.weekOptions)
+        ? program.weekOptions.filter((value): value is number => Number.isFinite(value) && value > 0)
+        : [];
+
+      return {
+        program,
+        minWeeks: program.minWeeks ?? (legacyOptions.length > 0 ? Math.min(...legacyOptions) : null),
+        maxWeeks: program.maxWeeks ?? (legacyOptions.length > 0 ? Math.max(...legacyOptions) : null),
+      };
+    });
+
+    const minCandidates = programRanges
+      .map(({ minWeeks }) => minWeeks)
       .filter((value): value is number => typeof value === 'number' && Number.isFinite(value) && value > 0);
-    const maxCandidates = filteredPrograms
-      .map((program) => program.maxWeeks)
+    const maxCandidates = programRanges
+      .map(({ maxWeeks }) => maxWeeks)
       .filter((value): value is number => typeof value === 'number' && Number.isFinite(value) && value > 0);
 
     const minWeeks = minCandidates.length > 0 ? Math.min(...minCandidates) : null;
     const maxWeeks = maxCandidates.length > 0 ? Math.max(...maxCandidates) : null;
-
-    const explicitOptions = filteredPrograms.flatMap((program) =>
-      Array.isArray(program.weekOptions)
-        ? program.weekOptions.filter((value): value is number => typeof value === 'number' && Number.isFinite(value) && value > 0)
-        : [],
-    );
-
-    const fallbackRangeOptions =
-      explicitOptions.length === 0 && minWeeks != null && maxWeeks != null && maxWeeks >= minWeeks && maxWeeks - minWeeks <= 12
-        ? Array.from({ length: maxWeeks - minWeeks + 1 }, (_, index) => minWeeks + index)
-        : [];
-
-    const options = explicitOptions.length > 0
-      ? [...new Set(explicitOptions)].sort((a, b) => a - b)
-      : [...new Set([...fallbackRangeOptions, ...minCandidates, ...maxCandidates])].sort((a, b) => a - b);
 
     return {
       countryCode: args.countryCode ?? null,
@@ -990,13 +987,11 @@ export class ConciergeToolExecutorService {
       programSlug: args.programSlug ?? null,
       minWeeks,
       maxWeeks,
-      options,
-      basedOnPrograms: filteredPrograms.map((program) => ({
+      basedOnPrograms: programRanges.map(({ program, minWeeks: programMinWeeks, maxWeeks: programMaxWeeks }) => ({
         slug: program.slug,
         name: program.name,
-        minWeeks: program.minWeeks,
-        maxWeeks: program.maxWeeks,
-        weekOptions: program.weekOptions,
+        minWeeks: programMinWeeks,
+        maxWeeks: programMaxWeeks,
       })),
     };
   }

@@ -43,6 +43,8 @@ export function validateResourceMetadata(
     validUntil?: Date | null;
     minAge?: number | null;
     maxAge?: number | null;
+    minWeeks?: number | null;
+    maxWeeks?: number | null;
     priceFrom?: number | null;
     priceCurrency?: string | null;
   },
@@ -54,6 +56,10 @@ export function validateResourceMetadata(
 
   if (value.minAge != null && value.maxAge != null && value.minAge > value.maxAge) {
     ctx.addIssue({ code: 'custom', path: ['maxAge'], message: 'maxAge must be greater than or equal to minAge' });
+  }
+
+  if (value.minWeeks != null && value.maxWeeks != null && value.minWeeks > value.maxWeeks) {
+    ctx.addIssue({ code: 'custom', path: ['maxWeeks'], message: 'maxWeeks must be greater than or equal to minWeeks' });
   }
 
   if (value.priceFrom != null && !value.priceCurrency) {

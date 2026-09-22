@@ -49,6 +49,8 @@ const listSelect = {
       name: true,
       rule: {
         select: {
+          minWeeks: true,
+          maxWeeks: true,
           weekOptions: true,
         },
       },
@@ -196,13 +198,18 @@ function mapCurrentVersion(version: ResourceListRecord['versions'][number] | nul
 
 function mapListResource(resource: ResourceListRecord): ResourceListItem {
   const currentVersion = resource.versions[0] ?? null;
-  const weekOptions = resource.program?.rule?.weekOptions ?? [];
+  const legacyWeekOptions = resource.program?.rule?.weekOptions ?? [];
+  const minWeeks = resource.program?.rule?.minWeeks
+    ?? (legacyWeekOptions.length > 0 ? Math.min(...legacyWeekOptions) : null);
+  const maxWeeks = resource.program?.rule?.maxWeeks
+    ?? (legacyWeekOptions.length > 0 ? Math.max(...legacyWeekOptions) : null);
   const program = resource.program
     ? {
         id: resource.program.id,
         slug: resource.program.slug,
         name: resource.program.name,
-        weekOptions,
+        minWeeks,
+        maxWeeks,
       }
     : null;
   const locations = resource.locationAssignments.map((assignment) => assignment.location);
@@ -224,7 +231,8 @@ function mapListResource(resource: ResourceListRecord): ResourceListItem {
     priceUnit: resource.priceUnit,
     priceNotes: resource.priceNotes,
     active: resource.active,
-    weekOptions,
+    minWeeks,
+    maxWeeks,
     country: resource.country,
     family: resource.family,
     program,
@@ -325,9 +333,10 @@ export class ResourceRepository implements ResourceReadRepository {
         select: detailSelect,
       });
 
-      await this.syncProgramWeekOptions(tx, {
+      await this.syncProgramWeekRange(tx, {
         programId: relations.programId,
-        weekOptions: input.weekOptions,
+        minWeeks: input.minWeeks,
+        maxWeeks: input.maxWeeks,
       });
 
       return created;
@@ -431,9 +440,10 @@ export class ResourceRepository implements ResourceReadRepository {
         });
       }
 
-      await this.syncProgramWeekOptions(tx, {
+      await this.syncProgramWeekRange(tx, {
         programId: relations.programId,
-        weekOptions: input.weekOptions,
+        minWeeks: input.minWeeks,
+        maxWeeks: input.maxWeeks,
       });
 
       return resource;
@@ -975,19 +985,28 @@ export class ResourceRepository implements ResourceReadRepository {
     }
   }
 
-  private async syncProgramWeekOptions(
+  private async syncProgramWeekRange(
     tx: Prisma.TransactionClient,
     input: {
       programId: string | null;
-      weekOptions: number[] | undefined;
+      minWeeks: number | null | undefined;
+      maxWeeks: number | null | undefined;
     },
   ): Promise<void> {
-    if (input.weekOptions === undefined) {
+    if (input.minWeeks === undefined && input.maxWeeks === undefined) {
+      return;
+    }
+
+    if (!input.programId && input.minWeeks == null && input.maxWeeks == null) {
       return;
     }
 
     if (!input.programId) {
-      throw new ValidationAppError('weekOptions requires a linked program');
+      throw new ValidationAppError('The duration range requires a linked program');
+    }
+
+    if (input.minWeeks != null && input.maxWeeks != null && input.minWeeks > input.maxWeeks) {
+      throw new ValidationAppError('maxWeeks must be greater than or equal to minWeeks');
     }
 
     await tx.programRule.upsert({
@@ -995,10 +1014,14 @@ export class ResourceRepository implements ResourceReadRepository {
       create: {
         programId: input.programId,
         quoteMode: QuoteMode.WEEK,
-        weekOptions: input.weekOptions,
+        minWeeks: input.minWeeks ?? null,
+        maxWeeks: input.maxWeeks ?? null,
+        weekOptions: [],
       },
       update: {
-        weekOptions: input.weekOptions,
+        ...(input.minWeeks !== undefined ? { minWeeks: input.minWeeks } : {}),
+        ...(input.maxWeeks !== undefined ? { maxWeeks: input.maxWeeks } : {}),
+        weekOptions: [],
       },
     });
   }

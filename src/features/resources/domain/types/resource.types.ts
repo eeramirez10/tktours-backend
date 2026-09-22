@@ -41,7 +41,8 @@ export type ResourceBaseInput = {
   month: number | null;
   year: number | null;
   active: boolean;
-  weekOptions?: number[];
+  minWeeks?: number | null;
+  maxWeeks?: number | null;
   validFrom?: Date | null;
   validUntil?: Date | null;
   minAge?: number | null;
@@ -72,7 +73,8 @@ export type UpdateResourceInput = {
   month?: number | null;
   year?: number | null;
   active?: boolean;
-  weekOptions?: number[];
+  minWeeks?: number | null;
+  maxWeeks?: number | null;
   validFrom?: Date | null;
   validUntil?: Date | null;
   minAge?: number | null;
@@ -131,7 +133,8 @@ export type ResourceProgram = {
   id: string;
   slug: string;
   name: string;
-  weekOptions: number[];
+  minWeeks: number | null;
+  maxWeeks: number | null;
 };
 
 export type ResourceLocation = {
@@ -183,7 +186,8 @@ export type ResourceListItem = {
   priceUnit: string | null;
   priceNotes: string | null;
   active: boolean;
-  weekOptions: number[];
+  minWeeks: number | null;
+  maxWeeks: number | null;
   country: ResourceCountry;
   family: ResourceFamily | null;
   program: ResourceProgram | null;

@@ -2442,8 +2442,12 @@ export class ConciergeOrchestratorService {
     if (params.nextField === 'weeks') {
       const options = await this.buildWeeksOptionsList(params.context);
       if (!options) return params.replyText;
-      const cleaned = this.stripCatalogOptionsBlocks(params.replyText, ['Opciones de duración disponibles:', 'Opciones disponibles:']);
-      return `${cleaned}\n${options}`;
+      const cleaned = this.stripCatalogOptionsBlocks(params.replyText, [
+        'Duración disponible:',
+        'Opciones de duración disponibles:',
+        'Opciones disponibles:',
+      ]);
+      return `${options}\n${cleaned}`;
     }
 
     return params.replyText;
@@ -2535,6 +2539,10 @@ export class ConciergeOrchestratorService {
           nextField: params.nextField,
           context: params.context,
         });
+      }
+
+      if (params.nextField === 'weeks' && optionsText) {
+        return `${optionsText}\n${candidate}`.trim();
       }
 
       return `${candidate}${optionsText ? `\n${optionsText}` : ''}`.trim();
@@ -2690,24 +2698,27 @@ export class ConciergeOrchestratorService {
       programSlug: context.activeInquiry?.program?.slug ?? undefined,
     });
 
-    const options =
-      weeksResult &&
-      typeof weeksResult === 'object' &&
-      Array.isArray((weeksResult as { options?: unknown }).options)
-        ? ((weeksResult as { options: unknown[] }).options ?? [])
-            .filter((value): value is number => typeof value === 'number' && Number.isFinite(value) && value > 0)
-            .sort((a, b) => a - b)
-        : [];
-
-    if (!options.length) {
+    if (!weeksResult || typeof weeksResult !== 'object') {
       return null;
     }
 
-    const rendered = options
-      .map((weeks) => `${weeks} ${weeks === 1 ? 'semana' : 'semanas'}`)
-      .join('\n');
+    const { minWeeks, maxWeeks } = weeksResult as { minWeeks?: unknown; maxWeeks?: unknown };
+    const minimum = typeof minWeeks === 'number' && Number.isFinite(minWeeks) && minWeeks > 0 ? minWeeks : null;
+    const maximum = typeof maxWeeks === 'number' && Number.isFinite(maxWeeks) && maxWeeks > 0 ? maxWeeks : null;
 
-    return `Opciones de duración disponibles:\n${rendered}`;
+    if (minimum == null && maximum == null) return null;
+
+    if (minimum != null && maximum != null && minimum === maximum) {
+      return `Duración disponible: ${minimum} ${minimum === 1 ? 'semana' : 'semanas'}.`;
+    }
+
+    if (minimum != null && maximum != null) {
+      return `Tenemos opciones de ${minimum} a ${maximum} semanas.`;
+    }
+
+    return minimum != null
+      ? `Tenemos programas desde ${minimum} ${minimum === 1 ? 'semana' : 'semanas'}.`
+      : `Tenemos programas de hasta ${maximum} semanas.`;
   }
 
   private toAccommodationLabel(key: string, fallbackName: string | null): string {
