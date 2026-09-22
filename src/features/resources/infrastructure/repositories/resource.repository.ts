@@ -619,7 +619,11 @@ export class ResourceRepository implements ResourceReadRepository {
     });
 
     try {
-      await prisma.resource.delete({ where: { id: resourceId } });
+      await prisma.$transaction(async (tx) => {
+        await tx.inquiryResourceSend.deleteMany({ where: { resourceId } });
+        await tx.inquiryRecommendation.deleteMany({ where: { resourceId } });
+        await tx.resource.delete({ where: { id: resourceId } });
+      });
     } catch (error) {
       if (this.isPrismaNotFound(error)) {
         throw new NotFoundAppError('Resource not found');
