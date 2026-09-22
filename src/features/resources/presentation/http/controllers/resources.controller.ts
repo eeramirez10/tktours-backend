@@ -81,11 +81,23 @@ export const uploadResourcePdf = multer({
 }).single('file');
 
 export class ResourcesController {
-  getHealth(_req: Request, res: Response) {
-    return res.json({
-      ok: true,
-      data: getResourcesHealthUseCase.execute(),
-    });
+  async getHealth(_req: Request, res: Response) {
+    try {
+      await storageService.ensureReady();
+      return res.json({
+        ok: true,
+        data: getResourcesHealthUseCase.execute(),
+      });
+    } catch {
+      return res.status(503).json({
+        ok: false,
+        error: {
+          code: 'RESOURCE_STORAGE_UNAVAILABLE',
+          message: 'Resource storage is not available',
+          details: null,
+        },
+      });
+    }
   }
 
   async listResources(req: Request, res: Response, next: NextFunction) {

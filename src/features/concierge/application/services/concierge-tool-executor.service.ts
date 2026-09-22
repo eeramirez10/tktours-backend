@@ -684,7 +684,9 @@ export class ConciergeToolExecutorService {
           ? {
               id: resource.versions[0].id,
               fileName: resource.versions[0].fileName,
-              fileUrl: resource.versions[0].fileUrl,
+              fileUrl: resource.versions[0].sourceType === 'UPLOAD'
+                ? `/api/resources/${resource.id}/versions/${resource.versions[0].id}/download`
+                : resource.versions[0].fileUrl,
               mimeType: resource.versions[0].mimeType,
               extractionStatus: resource.versions[0].extraction?.status ?? null,
               summary: resource.versions[0].extraction?.summary ?? null,

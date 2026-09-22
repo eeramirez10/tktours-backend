@@ -8,8 +8,10 @@ export const publicResourceDownloadRoutes = Router();
 publicResourceDownloadRoutes.get('/resources/:resourceId/versions/:versionId/download', (req, res, next) =>
   resourcesController.downloadVersion(req, res, next),
 );
+publicResourceDownloadRoutes.get('/resources/health', (req, res) => {
+  void resourcesController.getHealth(req, res);
+});
 
-resourcesRoutes.get('/resources/health', (req, res) => resourcesController.getHealth(req, res));
 resourcesRoutes.get('/resources/audit', (req, res, next) => resourcesController.auditResources(req, res, next));
 resourcesRoutes.get('/resources', (req, res, next) => resourcesController.listResources(req, res, next));
 resourcesRoutes.post('/resources/analyze', uploadResourcePdf, (req, res, next) => resourcesController.analyzeDocument(req, res, next));

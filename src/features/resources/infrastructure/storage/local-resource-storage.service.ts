@@ -1,4 +1,5 @@
-import { mkdir, rm, writeFile } from 'node:fs/promises';
+import { constants } from 'node:fs';
+import { access, mkdir, rm, writeFile } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 
 import { env } from '../../../../shared/config/env.js';
@@ -8,6 +9,11 @@ export class LocalResourceStorageService {
 
   constructor(rootDir = env.RESOURCES_STORAGE_DIR) {
     this.rootDir = resolve(rootDir);
+  }
+
+  async ensureReady(): Promise<void> {
+    await mkdir(this.rootDir, { recursive: true });
+    await access(this.rootDir, constants.R_OK | constants.W_OK);
   }
 
   async writeVersionFile(params: {

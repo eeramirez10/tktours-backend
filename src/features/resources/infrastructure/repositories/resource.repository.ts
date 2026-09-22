@@ -1,7 +1,6 @@
 import { Prisma, QuoteMode, ResourceSourceType } from '@prisma/client';
 import { randomUUID } from 'node:crypto';
 
-import { env } from '../../../../shared/config/env.js';
 import { ConflictAppError, NotFoundAppError, ValidationAppError } from '../../../../shared/domain/errors/app-error.js';
 import { prisma } from '../../../../shared/infrastructure/database/prisma.js';
 import type { ResourceReadRepository } from '../../domain/repositories/resource-read.repository.js';
@@ -134,18 +133,8 @@ type ResolvedRelations = {
   locationIds: string[];
 };
 
-function toPublicUrl(pathOrUrl: string): string {
-  if (/^https?:\/\//i.test(pathOrUrl)) {
-    return pathOrUrl;
-  }
-
-  const baseUrl = env.PUBLIC_BASE_URL?.trim().replace(/\/+$/, '');
-  if (!baseUrl) {
-    return pathOrUrl;
-  }
-
-  const relative = pathOrUrl.startsWith('/') ? pathOrUrl : `/${pathOrUrl}`;
-  return `${baseUrl}${relative}`;
+function resourceVersionDownloadPath(resourceId: string, versionId: string): string {
+  return `/api/resources/${resourceId}/versions/${versionId}/download`;
 }
 
 function mapExtraction(extraction: ResourceListRecord['versions'][number]['extraction'] | null): ResourceCurrentExtraction | null {
@@ -161,11 +150,13 @@ function mapExtraction(extraction: ResourceListRecord['versions'][number]['extra
   };
 }
 
-function mapVersion(version: ResourceDetailRecord['versions'][number]): ResourceVersionItem {
+function mapVersion(version: ResourceDetailRecord['versions'][number], resourceId: string): ResourceVersionItem {
   return {
     id: version.id,
     versionNumber: version.versionNumber,
-    fileUrl: version.fileUrl,
+    fileUrl: version.sourceType === ResourceSourceType.UPLOAD
+      ? resourceVersionDownloadPath(resourceId, version.id)
+      : version.fileUrl,
     fileName: version.fileName,
     mimeType: version.mimeType,
     fileSize: version.fileSize,
@@ -178,7 +169,7 @@ function mapVersion(version: ResourceDetailRecord['versions'][number]): Resource
   };
 }
 
-function mapCurrentVersion(version: ResourceListRecord['versions'][number] | null): ResourceCurrentVersion | null {
+function mapCurrentVersion(version: ResourceListRecord['versions'][number] | null, resourceId: string): ResourceCurrentVersion | null {
   if (!version) {
     return null;
   }
@@ -186,7 +177,9 @@ function mapCurrentVersion(version: ResourceListRecord['versions'][number] | nul
   return {
     id: version.id,
     versionNumber: version.versionNumber,
-    fileUrl: version.fileUrl,
+    fileUrl: version.sourceType === ResourceSourceType.UPLOAD
+      ? resourceVersionDownloadPath(resourceId, version.id)
+      : version.fileUrl,
     fileName: version.fileName,
     mimeType: version.mimeType,
     fileSize: version.fileSize,
@@ -238,7 +231,7 @@ function mapListResource(resource: ResourceListRecord): ResourceListItem {
     program,
     location: primaryLocation,
     locations,
-    currentVersion: mapCurrentVersion(currentVersion),
+    currentVersion: mapCurrentVersion(currentVersion, resource.id),
     currentExtraction: mapExtraction(currentVersion?.extraction ?? null),
     createdAt: resource.createdAt,
     updatedAt: resource.updatedAt,
@@ -248,7 +241,7 @@ function mapListResource(resource: ResourceListRecord): ResourceListItem {
 function mapDetailResource(resource: ResourceDetailRecord): ResourceDetail {
   return {
     ...mapListResource(resource),
-    versions: resource.versions.map(mapVersion),
+    versions: resource.versions.map((version) => mapVersion(version, resource.id)),
   };
 }
 
@@ -542,7 +535,7 @@ export class ResourceRepository implements ResourceReadRepository {
         fileName: input.version.fileName,
         content,
       });
-      fileUrl = toPublicUrl(`/api/resources/${input.resourceId}/versions/${versionId}/download`);
+      fileUrl = resourceVersionDownloadPath(input.resourceId, versionId);
     } else {
       storageProvider = 'EXTERNAL';
       fileUrl = input.version.externalUrl;
