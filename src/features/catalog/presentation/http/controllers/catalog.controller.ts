@@ -199,6 +199,16 @@ export class CatalogController {
     }
   }
 
+  async deleteProgram(req: Request, res: Response, next: NextFunction) {
+    try {
+      const { programId } = catalogProgramIdParamsSchema.parse(req.params);
+      await catalogRepository.deleteProgram(programId);
+      return res.status(204).send();
+    } catch (error) {
+      return next(error instanceof ZodError ? toValidationError(error, 'Invalid program id') : error);
+    }
+  }
+
   async getProgramBySlug(req: Request, res: Response, next: NextFunction) {
     try {
       const { slug } = catalogProgramSlugParamsSchema.parse(req.params);

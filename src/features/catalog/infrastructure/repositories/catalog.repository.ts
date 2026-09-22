@@ -546,6 +546,31 @@ export class CatalogRepository implements CatalogReadRepository {
     return stripResources(mapProgram(program));
   }
 
+  async deleteProgram(programId: string): Promise<void> {
+    await prisma.$transaction(async (tx) => {
+      const program = await tx.program.findUnique({
+        where: { id: programId },
+        select: {
+          name: true,
+          _count: { select: { resources: true } },
+        },
+      });
+
+      if (!program) {
+        throw new NotFoundAppError('Program not found');
+      }
+      if (program._count.resources > 0) {
+        throw new ConflictAppError(
+          `No se puede eliminar “${program.name}” porque tiene ${program._count.resources} ${program._count.resources === 1 ? 'recurso asociado' : 'recursos asociados'}. Elimina o reasigna esos recursos primero.`,
+        );
+      }
+
+      await tx.inquiryRecommendation.deleteMany({ where: { programId } });
+      await tx.inquiry.updateMany({ where: { programId }, data: { programId: null } });
+      await tx.program.delete({ where: { id: programId } });
+    });
+  }
+
   async findProgramBySlug(slug: string): Promise<CatalogProgramDetail | null> {
     const program = await prisma.program.findFirst({
       where: { slug },

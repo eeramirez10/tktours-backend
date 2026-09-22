@@ -20,5 +20,6 @@ catalogRoutes.patch('/catalog/locations/:locationId', (req, res, next) => catalo
 catalogRoutes.get('/catalog/programs/recommendations', (req, res, next) => catalogController.listRecommendedPrograms(req, res, next));
 catalogRoutes.post('/catalog/programs', (req, res, next) => catalogController.createProgram(req, res, next));
 catalogRoutes.patch('/catalog/programs/:programId', (req, res, next) => catalogController.updateProgram(req, res, next));
+catalogRoutes.delete('/catalog/programs/:programId', (req, res, next) => catalogController.deleteProgram(req, res, next));
 catalogRoutes.get('/catalog/programs/:slug', (req, res, next) => catalogController.getProgramBySlug(req, res, next));
 catalogRoutes.get('/catalog/programs', (req, res, next) => catalogController.listPrograms(req, res, next));
