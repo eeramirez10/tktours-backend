@@ -7,12 +7,6 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-enum ProductFamilyKey {
-  CAMP
-  LANGUAGE_COURSE
-  SCHOOL_PROGRAM
-}
-
 enum QuoteMode {
   WEEK
   SEMESTER
@@ -159,7 +153,7 @@ model Country {
 
 model ProductFamily {
   id         String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  key        ProductFamilyKey  @unique
+  key        String            @unique @db.VarChar(64)
   name       String
   active     Boolean           @default(true)
   programs   Program[]

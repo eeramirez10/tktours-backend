@@ -1,6 +1,5 @@
 import { z } from 'zod';
 
-const FAMILY_KEYS = ['CAMP', 'LANGUAGE_COURSE', 'SCHOOL_PROGRAM'] as const;
 const RESOURCE_TYPES = ['QUOTE', 'INFO', 'BROCHURE', 'MANUAL', 'PRESENTATION'] as const;
 
 function getFirstQueryValue(value: unknown) {
@@ -41,7 +40,7 @@ export const listResourcesQuerySchema = z
   .object({
     active: booleanQuerySchema,
     countryCode: optionalTrimmedStringSchema,
-    familyKey: z.preprocess(getFirstQueryValue, z.enum(FAMILY_KEYS).optional()),
+    familyKey: optionalTrimmedStringSchema,
     type: z.preprocess(getFirstQueryValue, z.enum(RESOURCE_TYPES).optional()),
     programSlug: optionalTrimmedStringSchema,
     locationSlug: optionalTrimmedStringSchema,

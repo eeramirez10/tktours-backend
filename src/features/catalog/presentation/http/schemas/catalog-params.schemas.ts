@@ -11,3 +11,11 @@ export const catalogCountryIdParamsSchema = z.object({
 export const catalogLocationIdParamsSchema = z.object({
   locationId: z.string().uuid(),
 });
+
+export const catalogFamilyIdParamsSchema = z.object({
+  familyId: z.string().uuid(),
+});
+
+export const catalogProgramIdParamsSchema = z.object({
+  programId: z.string().uuid(),
+});

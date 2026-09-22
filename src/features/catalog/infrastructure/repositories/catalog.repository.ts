@@ -14,11 +14,15 @@ import type {
   CatalogProgramRecommendationQuery,
   CatalogResourceSummary,
   CreateCatalogCountryInput,
+  CreateCatalogFamilyInput,
   CreateCatalogLocationInput,
+  CreateCatalogProgramInput,
   ListCatalogLocationsQuery,
   ListCatalogProgramsQuery,
   UpdateCatalogCountryInput,
+  UpdateCatalogFamilyInput,
   UpdateCatalogLocationInput,
+  UpdateCatalogProgramInput,
 } from '../../domain/types/catalog.types.js';
 
 const programSelect = {
@@ -217,6 +221,44 @@ export class CatalogRepository implements CatalogReadRepository {
       orderBy: { name: 'asc' },
       select: { id: true, key: true, name: true, active: true },
     });
+  }
+
+  async createFamily(input: CreateCatalogFamilyInput): Promise<CatalogFamily> {
+    const key = input.key?.trim().toUpperCase() || this.toFamilyKey(input.name);
+
+    try {
+      return await prisma.productFamily.create({
+        data: {
+          key,
+          name: input.name.trim(),
+          active: input.active,
+        },
+        select: { id: true, key: true, name: true, active: true },
+      });
+    } catch (error) {
+      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
+        throw new ConflictAppError('Family key already exists');
+      }
+      throw error;
+    }
+  }
+
+  async updateFamily(input: UpdateCatalogFamilyInput): Promise<CatalogFamily> {
+    try {
+      return await prisma.productFamily.update({
+        where: { id: input.familyId },
+        data: {
+          ...(input.name !== undefined ? { name: input.name.trim() } : {}),
+          ...(input.active !== undefined ? { active: input.active } : {}),
+        },
+        select: { id: true, key: true, name: true, active: true },
+      });
+    } catch (error) {
+      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2025') {
+        throw new NotFoundAppError('Family not found');
+      }
+      throw error;
+    }
   }
 
   async createCountry(input: CreateCatalogCountryInput): Promise<CatalogCountry> {
@@ -436,6 +478,74 @@ export class CatalogRepository implements CatalogReadRepository {
     return programs.map((program) => stripResources(mapProgram(program)));
   }
 
+  async createProgram(input: CreateCatalogProgramInput): Promise<CatalogProgram> {
+    const [country, family] = await Promise.all([
+      prisma.country.findUnique({ where: { code: input.countryCode.trim().toUpperCase() }, select: { id: true } }),
+      prisma.productFamily.findUnique({ where: { key: input.familyKey.trim().toUpperCase() }, select: { id: true } }),
+    ]);
+
+    if (!country) {
+      throw new NotFoundAppError(`Country not found for code ${input.countryCode}`);
+    }
+    if (!family) {
+      throw new NotFoundAppError(`Family not found for key ${input.familyKey}`);
+    }
+
+    try {
+      const program = await prisma.program.create({
+        data: {
+          countryId: country.id,
+          familyId: family.id,
+          slug: input.slug?.trim() || this.slugify(input.name),
+          name: input.name.trim(),
+          description: input.description?.trim() || null,
+          minAge: input.minAge ?? null,
+          maxAge: input.maxAge ?? null,
+          active: input.active,
+        },
+        select: programSelect,
+      });
+
+      return stripResources(mapProgram(program));
+    } catch (error) {
+      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
+        throw new ConflictAppError('Program slug already exists for that country');
+      }
+      throw error;
+    }
+  }
+
+  async updateProgram(input: UpdateCatalogProgramInput): Promise<CatalogProgram> {
+    const current = await prisma.program.findUnique({
+      where: { id: input.programId },
+      select: { minAge: true, maxAge: true },
+    });
+
+    if (!current) {
+      throw new NotFoundAppError('Program not found');
+    }
+
+    const minAge = input.minAge === undefined ? current.minAge : input.minAge;
+    const maxAge = input.maxAge === undefined ? current.maxAge : input.maxAge;
+    if (minAge != null && maxAge != null && minAge > maxAge) {
+      throw new ConflictAppError('Maximum age must be greater than or equal to minimum age');
+    }
+
+    const program = await prisma.program.update({
+      where: { id: input.programId },
+      data: {
+        ...(input.name !== undefined ? { name: input.name.trim() } : {}),
+        ...(input.description !== undefined ? { description: input.description?.trim() || null } : {}),
+        ...(input.minAge !== undefined ? { minAge: input.minAge } : {}),
+        ...(input.maxAge !== undefined ? { maxAge: input.maxAge } : {}),
+        ...(input.active !== undefined ? { active: input.active } : {}),
+      },
+      select: programSelect,
+    });
+
+    return stripResources(mapProgram(program));
+  }
+
   async findProgramBySlug(slug: string): Promise<CatalogProgramDetail | null> {
     const program = await prisma.program.findFirst({
       where: { slug },
@@ -557,5 +667,16 @@ export class CatalogRepository implements CatalogReadRepository {
       .toLowerCase()
       .replace(/[^a-z0-9]+/g, '-')
       .replace(/^-+|-+$/g, '');
+  }
+
+  private toFamilyKey(value: string): string {
+    return value
+      .trim()
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .toUpperCase()
+      .replace(/[^A-Z0-9]+/g, '_')
+      .replace(/^_+|_+$/g, '')
+      .slice(0, 64);
   }
 }

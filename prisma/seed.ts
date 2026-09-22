@@ -1,8 +1,14 @@
-import { PrismaClient, ProductFamilyKey, QuoteMode, SeasonKey, AccommodationKey } from '@prisma/client';
+import { PrismaClient, QuoteMode, SeasonKey, AccommodationKey } from '@prisma/client';
 
 const prisma = new PrismaClient();
 
-type ProductFamilyKeyValue = (typeof ProductFamilyKey)[keyof typeof ProductFamilyKey];
+const PRODUCT_FAMILY_KEY = {
+  CAMP: 'CAMP',
+  LANGUAGE_COURSE: 'LANGUAGE_COURSE',
+  SCHOOL_PROGRAM: 'SCHOOL_PROGRAM',
+} as const;
+
+type ProductFamilyKeyValue = (typeof PRODUCT_FAMILY_KEY)[keyof typeof PRODUCT_FAMILY_KEY];
 type QuoteModeValue = (typeof QuoteMode)[keyof typeof QuoteMode];
 type SeasonKeyValue = (typeof SeasonKey)[keyof typeof SeasonKey];
 type AccommodationKeyValue = (typeof AccommodationKey)[keyof typeof AccommodationKey];
@@ -41,9 +47,9 @@ type ProgramSeed = {
 };
 
 const productFamilies = [
-  { key: ProductFamilyKey.CAMP, name: 'Camp', active: true },
-  { key: ProductFamilyKey.LANGUAGE_COURSE, name: 'Language course', active: true },
-  { key: ProductFamilyKey.SCHOOL_PROGRAM, name: 'Circuitos por el mundo', active: true },
+  { key: PRODUCT_FAMILY_KEY.CAMP, name: 'Camp', active: true },
+  { key: PRODUCT_FAMILY_KEY.LANGUAGE_COURSE, name: 'Language course', active: true },
+  { key: PRODUCT_FAMILY_KEY.SCHOOL_PROGRAM, name: 'Circuitos por el mundo', active: true },
 ] as const;
 
 const accommodationTypes = [
@@ -71,7 +77,7 @@ const canadaPrograms: ProgramSeed[] = [
     slug: 'canada-summer-camp',
     name: 'Canada Summer Camp',
     description: 'Programa base de campamento de verano en Canadá con cotización semanal.',
-    familyKey: ProductFamilyKey.CAMP,
+    familyKey: PRODUCT_FAMILY_KEY.CAMP,
     minAge: 7,
     maxAge: 18,
     rule: {
@@ -103,7 +109,7 @@ const canadaPrograms: ProgramSeed[] = [
     slug: 'canada-winter-camp',
     name: 'Canada Winter Camp',
     description: 'Programa base de campamento de invierno en Canadá con cotización semanal.',
-    familyKey: ProductFamilyKey.CAMP,
+    familyKey: PRODUCT_FAMILY_KEY.CAMP,
     minAge: 7,
     maxAge: 18,
     rule: {
@@ -135,7 +141,7 @@ const canadaPrograms: ProgramSeed[] = [
     slug: 'canada-easter-camp',
     name: 'Canada Easter Camp',
     description: 'Programa base de campamento de Easter en Canadá con cotización semanal.',
-    familyKey: ProductFamilyKey.CAMP,
+    familyKey: PRODUCT_FAMILY_KEY.CAMP,
     minAge: 7,
     maxAge: 18,
     rule: {
@@ -167,7 +173,7 @@ const canadaPrograms: ProgramSeed[] = [
     slug: 'canada-language-course',
     name: 'Canada Language Course',
     description: 'Programa base de curso de idiomas en Canadá con inicio semanal.',
-    familyKey: ProductFamilyKey.LANGUAGE_COURSE,
+    familyKey: PRODUCT_FAMILY_KEY.LANGUAGE_COURSE,
     minAge: 15,
     maxAge: null,
     rule: {
@@ -200,7 +206,7 @@ const canadaPrograms: ProgramSeed[] = [
     slug: 'canada-school-semester',
     name: 'Canada School Semester',
     description: 'Programa base de semestre escolar en Canadá.',
-    familyKey: ProductFamilyKey.SCHOOL_PROGRAM,
+    familyKey: PRODUCT_FAMILY_KEY.SCHOOL_PROGRAM,
     minAge: null,
     maxAge: null,
     rule: {
@@ -241,7 +247,7 @@ const canadaPrograms: ProgramSeed[] = [
     slug: 'canada-school-year',
     name: 'Canada School Year',
     description: 'Programa base de año escolar en Canadá.',
-    familyKey: ProductFamilyKey.SCHOOL_PROGRAM,
+    familyKey: PRODUCT_FAMILY_KEY.SCHOOL_PROGRAM,
     minAge: null,
     maxAge: null,
     rule: {
@@ -273,7 +279,7 @@ const canadaPrograms: ProgramSeed[] = [
     slug: 'canada-school-mini-stay-group',
     name: 'Canada School Mini Stay Group',
     description: 'Programa base de mini stay escolar para grupos en Canadá.',
-    familyKey: ProductFamilyKey.SCHOOL_PROGRAM,
+    familyKey: PRODUCT_FAMILY_KEY.SCHOOL_PROGRAM,
     minAge: null,
     maxAge: null,
     rule: {

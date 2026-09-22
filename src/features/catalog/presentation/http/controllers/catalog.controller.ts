@@ -13,14 +13,20 @@ import { CatalogRepository } from '../../../infrastructure/repositories/catalog.
 import { GeoReferenceService } from '../../../application/services/geo-reference.service.js';
 import {
   catalogCountryIdParamsSchema,
+  catalogFamilyIdParamsSchema,
   catalogLocationIdParamsSchema,
+  catalogProgramIdParamsSchema,
   catalogProgramSlugParamsSchema,
 } from '../schemas/catalog-params.schemas.js';
 import {
   createCatalogCountryBodySchema,
+  createCatalogFamilyBodySchema,
   createCatalogLocationBodySchema,
+  createCatalogProgramBodySchema,
   updateCatalogCountryBodySchema,
+  updateCatalogFamilyBodySchema,
   updateCatalogLocationBodySchema,
+  updateCatalogProgramBodySchema,
 } from '../schemas/catalog-admin.schemas.js';
 import {
   listCatalogCollectionQuerySchema,
@@ -110,6 +116,27 @@ export class CatalogController {
     }
   }
 
+  async createFamily(req: Request, res: Response, next: NextFunction) {
+    try {
+      const body = createCatalogFamilyBodySchema.parse(req.body);
+      const data = await catalogRepository.createFamily(body);
+      return res.status(201).json({ ok: true, data });
+    } catch (error) {
+      return next(error instanceof ZodError ? toValidationError(error, 'Invalid create family body') : error);
+    }
+  }
+
+  async updateFamily(req: Request, res: Response, next: NextFunction) {
+    try {
+      const { familyId } = catalogFamilyIdParamsSchema.parse(req.params);
+      const body = updateCatalogFamilyBodySchema.parse(req.body);
+      const data = await catalogRepository.updateFamily({ familyId, ...body });
+      return res.json({ ok: true, data });
+    } catch (error) {
+      return next(error instanceof ZodError ? toValidationError(error, 'Invalid update family body') : error);
+    }
+  }
+
   async listLocations(req: Request, res: Response, next: NextFunction) {
     try {
       const query = listCatalogLocationsQuerySchema.parse(req.query);
@@ -148,6 +175,27 @@ export class CatalogController {
       return res.json({ ok: true, data });
     } catch (error) {
       return next(error instanceof ZodError ? toValidationError(error, 'Invalid programs query') : error);
+    }
+  }
+
+  async createProgram(req: Request, res: Response, next: NextFunction) {
+    try {
+      const body = createCatalogProgramBodySchema.parse(req.body);
+      const data = await catalogRepository.createProgram(body);
+      return res.status(201).json({ ok: true, data });
+    } catch (error) {
+      return next(error instanceof ZodError ? toValidationError(error, 'Invalid create program body') : error);
+    }
+  }
+
+  async updateProgram(req: Request, res: Response, next: NextFunction) {
+    try {
+      const { programId } = catalogProgramIdParamsSchema.parse(req.params);
+      const body = updateCatalogProgramBodySchema.parse(req.body);
+      const data = await catalogRepository.updateProgram({ programId, ...body });
+      return res.json({ ok: true, data });
+    } catch (error) {
+      return next(error instanceof ZodError ? toValidationError(error, 'Invalid update program body') : error);
     }
   }
 

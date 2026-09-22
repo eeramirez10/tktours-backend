@@ -1,7 +1,5 @@
 import { z } from 'zod';
 
-const FAMILY_KEYS = ['CAMP', 'LANGUAGE_COURSE', 'SCHOOL_PROGRAM'] as const;
-
 function getFirstQueryValue(value: unknown) {
   return Array.isArray(value) ? value[0] : value;
 }
@@ -48,7 +46,7 @@ export const listCatalogProgramsQuerySchema = z
   .object({
     active: booleanQuerySchema,
     countryCode: optionalTrimmedStringSchema,
-    familyKey: z.preprocess(getFirstQueryValue, z.enum(FAMILY_KEYS).optional()),
+    familyKey: optionalTrimmedStringSchema,
     locationSlug: optionalTrimmedStringSchema,
     search: optionalTrimmedStringSchema,
   })
@@ -64,7 +62,7 @@ export const listCatalogLocationsQuerySchema = z
   .object({
     active: booleanQuerySchema,
     countryCode: optionalTrimmedStringSchema,
-    familyKey: z.preprocess(getFirstQueryValue, z.enum(FAMILY_KEYS).optional()),
+    familyKey: optionalTrimmedStringSchema,
     search: optionalTrimmedStringSchema,
   })
   .transform(({ active, countryCode, familyKey, search }) => ({

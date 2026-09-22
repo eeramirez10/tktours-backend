@@ -1,6 +1,5 @@
 import { z } from 'zod';
 
-const FAMILY_KEYS = ['CAMP', 'LANGUAGE_COURSE', 'SCHOOL_PROGRAM'] as const;
 const RESOURCE_TYPES = ['QUOTE', 'INFO', 'BROCHURE', 'MANUAL', 'PRESENTATION'] as const;
 const STORAGE_PROVIDERS = ['S3', 'R2', 'SUPABASE'] as const;
 
@@ -86,7 +85,7 @@ export const createResourceBodySchema = z
   .object({
     countryCode: z.string().trim().min(2).max(3),
     countryName: optionalTrimmedStringSchema,
-    familyKey: z.enum(FAMILY_KEYS).optional(),
+    familyKey: optionalTrimmedStringSchema,
     programSlug: optionalTrimmedStringSchema,
     locationSlug: optionalTrimmedStringSchema,
     locationSlugs: optionalLocationSlugsSchema,

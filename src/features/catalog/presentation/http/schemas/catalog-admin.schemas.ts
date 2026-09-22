@@ -22,6 +22,18 @@ const nullableTrimmedStringSchema = z.preprocess((value) => {
   return trimmed === '' ? null : trimmed;
 }, z.string().nullable().optional());
 
+const nullableIntSchema = z.number().int().min(0).max(120).nullable().optional();
+
+const catalogKeySchema = z.string().trim().min(2).max(64).regex(
+  /^[A-Z0-9]+(?:_[A-Z0-9]+)*$/,
+  'key must use uppercase letters, numbers, and underscores',
+);
+
+const catalogSlugSchema = z.string().trim().min(1).max(120).regex(
+  /^[a-z0-9]+(?:-[a-z0-9]+)*$/,
+  'slug must use lowercase letters, numbers, and hyphens',
+);
+
 export const createCatalogCountryBodySchema = z
   .object({
     code: z.string().trim().min(2).max(20),
@@ -54,6 +66,29 @@ export const updateCatalogCountryBodySchema = z
     name: value.name?.trim(),
     active: value.active,
   }));
+
+export const createCatalogFamilyBodySchema = z
+  .object({
+    key: catalogKeySchema.optional(),
+    name: z.string().trim().min(1).max(120),
+    active: z.boolean().optional(),
+  })
+  .transform((value) => ({
+    key: value.key,
+    name: value.name.trim(),
+    active: value.active ?? true,
+  }));
+
+export const updateCatalogFamilyBodySchema = z
+  .object({
+    name: optionalTrimmedStringSchema,
+    active: z.boolean().optional(),
+  })
+  .superRefine((value, ctx) => {
+    if (Object.keys(value).length === 0) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: [], message: 'at least one field is required' });
+    }
+  });
 
 export const createCatalogLocationBodySchema = z
   .object({
@@ -96,3 +131,41 @@ export const updateCatalogLocationBodySchema = z
     active: value.active,
   }));
 
+export const createCatalogProgramBodySchema = z
+  .object({
+    countryCode: z.string().trim().min(2).max(20),
+    familyKey: catalogKeySchema,
+    slug: catalogSlugSchema.optional(),
+    name: z.string().trim().min(1).max(160),
+    description: nullableTrimmedStringSchema,
+    minAge: nullableIntSchema,
+    maxAge: nullableIntSchema,
+    active: z.boolean().optional(),
+  })
+  .superRefine((value, ctx) => {
+    if (value.minAge != null && value.maxAge != null && value.minAge > value.maxAge) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['maxAge'], message: 'maxAge must be greater than or equal to minAge' });
+    }
+  })
+  .transform((value) => ({
+    ...value,
+    countryCode: value.countryCode.toUpperCase(),
+    active: value.active ?? true,
+  }));
+
+export const updateCatalogProgramBodySchema = z
+  .object({
+    name: optionalTrimmedStringSchema,
+    description: nullableTrimmedStringSchema,
+    minAge: nullableIntSchema,
+    maxAge: nullableIntSchema,
+    active: z.boolean().optional(),
+  })
+  .superRefine((value, ctx) => {
+    if (Object.keys(value).length === 0) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: [], message: 'at least one field is required' });
+    }
+    if (value.minAge != null && value.maxAge != null && value.minAge > value.maxAge) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['maxAge'], message: 'maxAge must be greater than or equal to minAge' });
+    }
+  });

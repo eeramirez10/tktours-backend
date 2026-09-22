@@ -1,4 +1,4 @@
-export type CatalogFamilyKey = 'CAMP' | 'LANGUAGE_COURSE' | 'SCHOOL_PROGRAM';
+export type CatalogFamilyKey = string;
 
 export type CatalogQuoteMode = 'WEEK' | 'SEMESTER' | 'YEAR' | 'MINI_STAY';
 
@@ -78,6 +78,18 @@ export type CatalogFamily = {
   active: boolean;
 };
 
+export type CreateCatalogFamilyInput = {
+  key?: string;
+  name: string;
+  active: boolean;
+};
+
+export type UpdateCatalogFamilyInput = {
+  familyId: string;
+  name?: string;
+  active?: boolean;
+};
+
 export type CatalogProgramLocation = {
   id: string;
   slug: string;
@@ -102,6 +114,26 @@ export type UpdateCatalogLocationInput = {
   name?: string;
   venueName?: string | null;
   description?: string | null;
+  active?: boolean;
+};
+
+export type CreateCatalogProgramInput = {
+  countryCode: string;
+  familyKey: string;
+  slug?: string;
+  name: string;
+  description?: string | null;
+  minAge?: number | null;
+  maxAge?: number | null;
+  active: boolean;
+};
+
+export type UpdateCatalogProgramInput = {
+  programId: string;
+  name?: string;
+  description?: string | null;
+  minAge?: number | null;
+  maxAge?: number | null;
   active?: boolean;
 };
 

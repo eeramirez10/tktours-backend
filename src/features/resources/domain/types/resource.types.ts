@@ -1,4 +1,4 @@
-export type ResourceFamilyKey = 'CAMP' | 'LANGUAGE_COURSE' | 'SCHOOL_PROGRAM';
+export type ResourceFamilyKey = string;
 
 export type ResourceTypeKey = 'QUOTE' | 'INFO' | 'BROCHURE' | 'MANUAL' | 'PRESENTATION';
 

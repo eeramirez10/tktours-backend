@@ -1,6 +1,5 @@
 import { z } from 'zod';
 
-const FAMILY_KEYS = ['CAMP', 'LANGUAGE_COURSE', 'SCHOOL_PROGRAM'] as const;
 const RESOURCE_TYPES = ['QUOTE', 'INFO', 'BROCHURE', 'MANUAL', 'PRESENTATION'] as const;
 
 const optionalTrimmedStringSchema = z.preprocess((value) => {
@@ -67,7 +66,7 @@ export const updateResourceBodySchema = z
   .object({
     countryCode: optionalTrimmedStringSchema,
     countryName: optionalTrimmedStringSchema,
-    familyKey: z.enum(FAMILY_KEYS).optional(),
+    familyKey: optionalTrimmedStringSchema,
     programSlug: nullableTrimmedStringSchema,
     locationSlug: nullableTrimmedStringSchema,
     locationSlugs: optionalLocationSlugsSchema,
