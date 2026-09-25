@@ -5,9 +5,7 @@ import { OpenAiResponsesClient } from '../../../concierge/infrastructure/clients
 
 const analysisSchema = z.object({
   suggestedTitle: z.string().trim().max(255).nullable(),
-  programName: z.string().trim().max(160).nullable(),
   summary: z.string().trim().max(1500).nullable(),
-  familyKey: z.enum(['CAMP', 'LANGUAGE_COURSE', 'SCHOOL_PROGRAM', 'UNKNOWN']),
   countryCode: z.string().trim().length(2).nullable(),
   countryName: z.string().trim().max(120).nullable(),
   cities: z.array(z.string().trim().min(1).max(150)).max(50),
@@ -31,9 +29,7 @@ const analysisJsonSchema = {
   additionalProperties: false,
   properties: {
     suggestedTitle: { type: ['string', 'null'] },
-    programName: { type: ['string', 'null'] },
     summary: { type: ['string', 'null'] },
-    familyKey: { type: 'string', enum: ['CAMP', 'LANGUAGE_COURSE', 'SCHOOL_PROGRAM', 'UNKNOWN'] },
     countryCode: { type: ['string', 'null'] },
     countryName: { type: ['string', 'null'] },
     cities: { type: 'array', items: { type: 'string' } },
@@ -50,7 +46,7 @@ const analysisJsonSchema = {
     confidence: { type: 'number' },
   },
   required: [
-    'suggestedTitle', 'programName', 'summary', 'familyKey', 'countryCode', 'countryName', 'cities',
+    'suggestedTitle', 'summary', 'countryCode', 'countryName', 'cities',
     'validFrom', 'validUntil', 'minAge', 'maxAge', 'minWeeks', 'maxWeeks', 'priceFrom', 'priceCurrency',
     'priceUnit', 'priceNotes', 'confidence',
   ],
@@ -76,9 +72,8 @@ export class ResourceDocumentAnalysisService {
         'minWeeks y maxWeeks representan el rango global de duración explícito en semanas. Para "2 a 8 semanas" devuelve 2 y 8; para una duración única devuelve el mismo valor en ambos campos. No conviertas días o meses si la equivalencia no es explícita.',
         'priceFrom es el menor precio base explícito aplicable al programa; no sumes cargos ni conviertas monedas.',
         'priceCurrency debe ser un código ISO 4217 de tres letras. priceUnit debe ser una etiqueta breve como programa, semana o paquete.',
-        'Solo conserva precio cuando el documento corresponda claramente a CAMP y sea un folleto. Para cualquier otro documento devuelve campos de precio en null.',
-        'familyKey clasifica el documento como CAMP, LANGUAGE_COURSE, SCHOOL_PROGRAM o UNKNOWN.',
-        'programName identifica el nombre comercial específico del programa. No uses palabras como folleto, brochure, manual, tarifas ni el año del documento. Conserva temporada o sede solo cuando formen parte clara del nombre oficial. Usa null si no es posible identificarlo.',
+        'Solo conserva precio cuando requestedFamilyKey sea CAMP y resourceType sea BROCHURE. Para cualquier otro contexto devuelve los campos de precio en null.',
+        'No clasifiques ni devuelvas la familia o el programa; esos datos serán seleccionados manualmente por el usuario.',
         'suggestedTitle debe ser breve y útil para identificar el recurso. summary debe resumir el contenido en español.',
       ].join('\n'),
       input: [{
@@ -122,7 +117,7 @@ export class ResourceDocumentAnalysisService {
     }
 
     const normalized = this.normalize(result.data);
-    const isCampBrochure = normalized.familyKey === 'CAMP' && input.resourceType === 'BROCHURE';
+    const isCampBrochure = input.requestedFamilyKey?.trim().toUpperCase() === 'CAMP' && input.resourceType === 'BROCHURE';
 
     const hasCompletePrice = normalized.priceFrom != null && normalized.priceCurrency != null;
 
