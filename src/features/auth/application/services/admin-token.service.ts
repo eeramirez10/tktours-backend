@@ -1,10 +1,12 @@
 import { SignJWT, jwtVerify } from 'jose';
+import { z } from 'zod';
 
 import { env } from '../../../../shared/config/env.js';
 import { UnauthorizedAppError } from '../../../../shared/domain/errors/app-error.js';
 import type { AuthenticatedAdmin } from '../../domain/auth.types.js';
 
 const encoder = new TextEncoder();
+const adminIdSchema = z.string().uuid();
 
 function getSigningKey(): Uint8Array {
   return encoder.encode(env.ADMIN_JWT_SECRET);
@@ -22,11 +24,12 @@ export async function createAdminAccessToken(admin: AuthenticatedAdmin): Promise
 export async function readAdminAccessToken(token: string): Promise<{ adminId: string }> {
   try {
     const { payload } = await jwtVerify(token, getSigningKey(), { algorithms: ['HS256'] });
-    if (!payload.sub) {
+    const adminId = adminIdSchema.safeParse(payload.sub);
+    if (!adminId.success) {
       throw new UnauthorizedAppError('Invalid access token');
     }
 
-    return { adminId: payload.sub };
+    return { adminId: adminId.data };
   } catch (error) {
     if (error instanceof UnauthorizedAppError) {
       throw error;
