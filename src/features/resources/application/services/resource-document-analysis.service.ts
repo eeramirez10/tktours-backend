@@ -71,8 +71,9 @@ export class ResourceDocumentAnalysisService {
         'minAge y maxAge representan el rango global aceptado por el recurso.',
         'minWeeks y maxWeeks representan el rango global de duración explícito en semanas. Para "2 a 8 semanas" devuelve 2 y 8; para una duración única devuelve el mismo valor en ambos campos. No conviertas días o meses si la equivalencia no es explícita.',
         'priceFrom es el menor precio base explícito aplicable al programa; no sumes cargos ni conviertas monedas.',
-        'priceCurrency debe ser un código ISO 4217 de tres letras. priceUnit debe ser una etiqueta breve como programa, semana o paquete.',
-        'Solo conserva precio cuando requestedFamilyKey sea CAMP y resourceType sea BROCHURE. Para cualquier otro contexto devuelve los campos de precio en null.',
+        'Si el precio no figura en el PDF, devuelve priceFrom, priceCurrency, priceUnit y priceNotes como null. Si figura solo parte de esta información, conserva lo explícito y devuelve null para lo ausente.',
+        'priceCurrency debe ser un código ISO 4217 de tres letras cuando la moneda sea identificable. priceUnit debe ser una etiqueta breve como programa, semana o paquete cuando el PDF la indique.',
+        'Extrae los datos de precio explícitos cuando resourceType sea BROCHURE, aunque requestedFamilyKey todavía no esté seleccionada. Para MANUAL devuelve todos los campos de precio en null.',
         'No clasifiques ni devuelvas la familia o el programa; esos datos serán seleccionados manualmente por el usuario.',
         'suggestedTitle debe ser breve y útil para identificar el recurso. summary debe resumir el contenido en español.',
       ].join('\n'),
@@ -117,11 +118,7 @@ export class ResourceDocumentAnalysisService {
     }
 
     const normalized = this.normalize(result.data);
-    const isCampBrochure = input.requestedFamilyKey?.trim().toUpperCase() === 'CAMP' && input.resourceType === 'BROCHURE';
-
-    const hasCompletePrice = normalized.priceFrom != null && normalized.priceCurrency != null;
-
-    return isCampBrochure && hasCompletePrice
+    return input.resourceType === 'BROCHURE'
       ? normalized
       : {
           ...normalized,

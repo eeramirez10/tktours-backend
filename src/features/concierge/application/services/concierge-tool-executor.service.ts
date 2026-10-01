@@ -141,7 +141,8 @@ export class ConciergeToolExecutorService {
   }
 
   private async findMatchingPrograms(args: FindMatchingProgramsArgs) {
-    return this.catalogRepository.findRecommendedPrograms(args);
+    const programs = await this.catalogRepository.findRecommendedPrograms(args);
+    return programs.map((program) => program.family.key === 'CAMP' ? { ...program, prices: [] } : program);
   }
 
   private async getContactInfo(args: GetContactInfoArgs) {
@@ -461,7 +462,8 @@ export class ConciergeToolExecutorService {
   }
 
   private async getProgramDetail(args: GetProgramDetailArgs) {
-    return this.catalogRepository.findProgramBySlug(args.slug);
+    const program = await this.catalogRepository.findProgramBySlug(args.slug);
+    return program?.family.key === 'CAMP' ? { ...program, prices: [] } : program;
   }
 
   private async listAvailableCountries(args: ListAvailableCountriesArgs) {
@@ -580,7 +582,7 @@ export class ConciergeToolExecutorService {
         maxAge: program.maxAge,
         minWeeks: program.minWeeks,
         maxWeeks: program.maxWeeks,
-        prices: program.prices,
+        prices: program.family.key === 'CAMP' ? [] : program.prices,
       })),
     };
   }
@@ -769,10 +771,10 @@ export class ConciergeToolExecutorService {
         validUntil: resource.validUntil?.toISOString().slice(0, 10) ?? null,
         minAge: resource.minAge ?? resource.program?.minAge ?? null,
         maxAge: resource.maxAge ?? resource.program?.maxAge ?? null,
-        priceFrom: resource.priceFrom == null ? null : Number(resource.priceFrom),
-        priceCurrency: resource.priceCurrency,
-        priceUnit: resource.priceUnit,
-        priceNotes: resource.priceNotes,
+        priceFrom: resource.priceFrom != null && resource.priceCurrency ? Number(resource.priceFrom) : null,
+        priceCurrency: resource.priceFrom != null && resource.priceCurrency ? resource.priceCurrency : null,
+        priceUnit: resource.priceFrom != null && resource.priceCurrency ? resource.priceUnit : null,
+        priceNotes: resource.priceFrom != null && resource.priceCurrency ? resource.priceNotes : null,
         countryCode: resource.country.code,
         countryName: this.toSpanishCountryName(resource.country.code, resource.country.name),
         familyKey: resource.family?.key ?? null,

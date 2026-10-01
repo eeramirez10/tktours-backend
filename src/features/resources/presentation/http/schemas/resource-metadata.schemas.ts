@@ -62,10 +62,6 @@ export function validateResourceMetadata(
     ctx.addIssue({ code: 'custom', path: ['maxWeeks'], message: 'maxWeeks must be greater than or equal to minWeeks' });
   }
 
-  if (value.priceFrom != null && !value.priceCurrency) {
-    ctx.addIssue({ code: 'custom', path: ['priceCurrency'], message: 'priceCurrency is required when priceFrom is provided' });
-  }
-
   if (value.priceFrom != null && (value.familyKey !== 'CAMP' || value.type !== 'BROCHURE')) {
     ctx.addIssue({
       code: 'custom',

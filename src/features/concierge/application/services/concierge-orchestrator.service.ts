@@ -682,6 +682,21 @@ export class ConciergeOrchestratorService {
       };
     }
 
+    if (this.isCampPriceQuestion(context)) {
+      const replyText = await this.buildConfirmedCampPriceAnswer(context);
+      return {
+        structured: {
+          ...parsed,
+          replyText,
+          missingFields: [],
+          shouldAskFollowUp: false,
+          shouldRefreshRecommendations: false,
+        },
+        trace: { strategy: 'none', details: { reason: 'verified_camp_price_answer' } },
+        contextPatch,
+      };
+    }
+
     const asksAboutOptions = detectedIntent === 'ASK_AVAILABLE_COUNTRIES' || detectedIntent === 'ASK_AVAILABLE_PROGRAMS';
     const isAnsweringQuestion = parsed.replyIntent === 'ANSWER_QUESTION'
       || options.resourceContentSearchUsed
@@ -1042,13 +1057,58 @@ export class ConciergeOrchestratorService {
       instructions: [
         'Eres una asesora de TKTours. Responde en español la pregunta actual del cliente con naturalidad y brevedad.',
         'Usa únicamente los datos de destinations y matches. Si no confirman el detalle preguntado, dilo claramente y ofrece seguimiento con un asesor.',
-        'No inventes precios, fechas, actividades, folletos ni disponibilidad. Los precios confirmados siempre se expresan como "desde" con su moneda.',
+        'No inventes precios, fechas, actividades, folletos ni disponibilidad. Solo menciona un precio si destinations contiene priceFrom y priceCurrency para el mismo folleto; exprésalo como "desde". Nunca obtengas precios de matches o texto extraído.',
         'Distingue un programa sin folleto de un folleto disponible. No vuelvas a pedir datos pendientes en esta respuesta.',
         'Responde solo texto plano.',
       ].join('\n'),
       input: JSON.stringify({ question, overview, content }),
     });
     return response.outputText.trim() || 'Con gusto te ayudo. Ese detalle no aparece confirmado en la información disponible; un asesor de TKTours puede revisarlo contigo.';
+  }
+
+  private isCampPriceQuestion(context: ConciergeTurnContext): boolean {
+    return context.activeInquiry?.family?.key === 'CAMP'
+      && /\b(precios?|costos?|cu[aá]nto\s+(?:cuesta|cuestan|vale|valen)|cotizaci[oó]n)\b/i.test(context.latestMessage?.text ?? '');
+  }
+
+  private async buildConfirmedCampPriceAnswer(context: ConciergeTurnContext): Promise<string> {
+    const inquiry = context.activeInquiry;
+    const countryCode = inquiry?.country?.code;
+    if (!countryCode) return 'Con gusto te ayudo con el costo 😊. ¿Qué país o campamento te interesa?';
+
+    const countryName = inquiry?.country?.name ?? 'ese destino';
+    const targetDate = this.getInquiryTargetDate(inquiry);
+    try {
+      const result = await this.toolExecutor.execute('list_available_resources', {
+        activeOnly: true,
+        familyKey: 'CAMP',
+        type: 'BROCHURE',
+        countryCode,
+        ...(inquiry?.program?.slug ? { programSlug: inquiry.program.slug } : {}),
+        ...(inquiry?.location?.slug ? { locationSlug: inquiry.location.slug } : {}),
+        ...(inquiry?.studentAge != null ? { studentAge: inquiry.studentAge } : {}),
+        ...(targetDate ? { targetDate } : {}),
+      });
+      const resources = result && typeof result === 'object' && Array.isArray((result as { resources?: unknown }).resources)
+        ? (result as { resources: Array<{ priceFrom?: unknown; priceCurrency?: unknown; priceUnit?: unknown }> }).resources
+        : [];
+      const priced = resources.filter((resource): resource is {
+        priceFrom: number; priceCurrency: string; priceUnit?: unknown;
+      } => typeof resource.priceFrom === 'number' && Number.isFinite(resource.priceFrom)
+        && typeof resource.priceCurrency === 'string' && resource.priceCurrency.length === 3);
+      if (priced.length === 0) {
+        return `Por ahora no tengo un precio confirmado para los campamentos en ${countryName}. Un asesor de TKTours puede ayudarte a confirmarlo.`;
+      }
+
+      const first = priced[0]!;
+      const lowest = priced.filter((item) => item.priceCurrency === first.priceCurrency)
+        .reduce((selected, item) => item.priceFrom < selected.priceFrom ? item : selected, first);
+      const amount = new Intl.NumberFormat('es-MX', { maximumFractionDigits: 2 }).format(lowest.priceFrom);
+      const unit = typeof lowest.priceUnit === 'string' && lowest.priceUnit.trim() ? ` por ${lowest.priceUnit.trim()}` : '';
+      return `Para los campamentos en ${countryName}, tengo folletos con precios desde ${amount} ${lowest.priceCurrency}${unit}. Si te interesa, puedo compartirte el folleto.`;
+    } catch {
+      return `Por ahora no tengo un precio confirmado para los campamentos en ${countryName}. Un asesor de TKTours puede ayudarte a confirmarlo.`;
+    }
   }
 
   private async resolveCampBrochureState(
@@ -1583,6 +1643,8 @@ export class ConciergeOrchestratorService {
         : seasonLabels.length > 0
         ? `Tengo un folleto disponible para ${countryName} en ${seasonLabels.join(', ')}${priceText ? `, ${priceText}` : ''} 😊. ¿Quieres que te lo comparta ahora?`
         : `Tengo folletos disponibles para ${countryName}${priceText ? `, ${priceText}` : ''} 😊. ¿Quieres que te los comparta ahora?`;
+    if (!priceText) return fallback;
+
     try {
       const instructions = [
         'Eres un concierge comercial de TKTours.',
@@ -1591,7 +1653,7 @@ export class ConciergeOrchestratorService {
         'Si hay temporadas disponibles, menciónalas de forma clara y natural usando verano, Semana Santa e invierno.',
         'Si hay más de una temporada disponible, pide al usuario que elija cuál quiere recibir.',
         'Si solo hay una temporada, termina con una pregunta de confirmación para enviarlo.',
-        'Cuando alguno de los folletos incluya precio, debes mencionarlo usando siempre la palabra "desde", el importe y la moneda exactos.',
+        'Menciona un precio solo cuando el folleto tenga importe y moneda. Exprésalo con "desde", importe y moneda exactos. Si ninguno tiene precio completo, no menciones precios ni cifras.',
         'No inventes, conviertas ni calcules precios.',
         'No menciones procesos internos ni herramientas.',
         'No uses formato JSON.',
@@ -1607,10 +1669,10 @@ export class ConciergeOrchestratorService {
             title: candidate.resourceTitle,
             season: this.getPrimarySeasonKey(candidate.seasonKeys),
             locationName: candidate.locationName,
-            priceFrom: candidate.priceFrom,
-            priceCurrency: candidate.priceCurrency,
-            priceUnit: candidate.priceUnit,
-            priceNotes: candidate.priceNotes,
+            priceFrom: candidate.priceFrom != null && candidate.priceCurrency ? candidate.priceFrom : null,
+            priceCurrency: candidate.priceFrom != null && candidate.priceCurrency ? candidate.priceCurrency : null,
+            priceUnit: candidate.priceFrom != null && candidate.priceCurrency ? candidate.priceUnit : null,
+            priceNotes: candidate.priceFrom != null && candidate.priceCurrency ? candidate.priceNotes : null,
           })),
           latestUserMessage: params.context.latestMessage?.text ?? null,
         }),

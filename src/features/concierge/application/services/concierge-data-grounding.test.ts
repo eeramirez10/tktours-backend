@@ -83,6 +83,85 @@ test('resource age filters use the resource bound before the program bound', () 
   ]);
 });
 
+test('an unpriced camp brochure is offered without mentioning a price', async () => {
+  const orchestrator = Object.create(ConciergeOrchestratorService.prototype) as {
+    responsesClient: { createTextResponse: () => Promise<never> };
+    buildPromptDrivenCampBrochureOffer: (params: {
+      context: ConciergeTurnContext;
+      candidates: Array<Record<string, unknown>>;
+    }) => Promise<string>;
+  };
+  orchestrator.responsesClient = {
+    createTextResponse: async () => { throw new Error('No model call expected for unpriced brochures'); },
+  };
+  const reply = await orchestrator.buildPromptDrivenCampBrochureOffer({
+    context: {} as ConciergeTurnContext,
+    candidates: [{
+      resourceTitle: 'Campamento Montreal', countryName: 'Canadá', seasonKeys: ['SUMMER'],
+      priceFrom: 1500, priceCurrency: null,
+    }],
+  });
+  assert.match(reply, /folleto disponible para Canadá en verano/);
+  assert.doesNotMatch(reply, /1500|desde|precio/i);
+});
+
+test('catalog program tools do not expose camp prices independently of brochures', async () => {
+  const pricedProgram = { family: { key: 'CAMP' }, prices: [{ amountFrom: '1500', currency: 'CAD' }] };
+  const executor = Object.create(ConciergeToolExecutorService.prototype) as {
+    catalogRepository: {
+      findProgramBySlug: () => Promise<typeof pricedProgram>;
+      findRecommendedPrograms: () => Promise<typeof pricedProgram[]>;
+    };
+    getProgramDetail: (args: { slug: string }) => Promise<typeof pricedProgram>;
+    findMatchingPrograms: (args: { countryCode: string }) => Promise<typeof pricedProgram[]>;
+  };
+  executor.catalogRepository = {
+    findProgramBySlug: async () => pricedProgram,
+    findRecommendedPrograms: async () => [pricedProgram],
+  };
+
+  const detail = await executor.getProgramDetail({ slug: 'canada-camp' });
+  const recommendations = await executor.findMatchingPrograms({ countryCode: 'CA' });
+  assert.deepEqual(detail.prices, []);
+  assert.deepEqual(recommendations[0]?.prices, []);
+});
+
+test('a camp price question only uses a complete price from a compatible brochure', async () => {
+  let resources: Array<Record<string, unknown>> = [{ priceFrom: 1500, priceCurrency: null }];
+  const calls: unknown[] = [];
+  const orchestrator = Object.create(ConciergeOrchestratorService.prototype) as {
+    toolExecutor: { execute: (name: string, args: unknown) => Promise<{ resources: Array<Record<string, unknown>> }> };
+    buildConfirmedCampPriceAnswer: (context: ConciergeTurnContext) => Promise<string>;
+    isCampPriceQuestion: (context: ConciergeTurnContext) => boolean;
+  };
+  orchestrator.toolExecutor = {
+    execute: async (name, args) => {
+      assert.equal(name, 'list_available_resources');
+      calls.push(args);
+      return { resources };
+    },
+  };
+  const context = {
+    activeInquiry: {
+      family: { key: 'CAMP' }, country: { code: 'CA', name: 'Canadá' },
+      studentAge: 15, program: { slug: 'canada-camp' }, location: null,
+    },
+    latestMessage: { text: '¿Cuánto cuesta el campamento?' },
+  } as unknown as ConciergeTurnContext;
+
+  assert.equal(orchestrator.isCampPriceQuestion(context), true);
+  const unpriced = await orchestrator.buildConfirmedCampPriceAnswer(context);
+  assert.doesNotMatch(unpriced, /1500|desde/i);
+
+  resources = [{ priceFrom: 1500, priceCurrency: 'CAD', priceUnit: 'semana' }];
+  const priced = await orchestrator.buildConfirmedCampPriceAnswer(context);
+  assert.match(priced, /desde 1,500 CAD por semana/);
+  assert.deepEqual(calls[0], {
+    activeOnly: true, familyKey: 'CAMP', type: 'BROCHURE', countryCode: 'CA',
+    programSlug: 'canada-camp', studentAge: 15,
+  });
+});
+
 test('field extraction accepts active countries beyond the former fixed list', async () => {
   const executor = Object.create(ConciergeToolExecutorService.prototype) as {
     catalogRepository: { findCountries: () => Promise<typeof country[]> };
