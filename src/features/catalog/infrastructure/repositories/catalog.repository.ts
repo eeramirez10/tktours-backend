@@ -306,21 +306,36 @@ export class CatalogRepository implements CatalogReadRepository {
   }
 
   async findLocations(query: ListCatalogLocationsQuery): Promise<CatalogProgramLocation[]> {
+    const filters: Prisma.ProgramLocationWhereInput[] = [];
+    if (query.familyKey) {
+      filters.push({ OR: [
+        { programs: { some: { active: true, family: { key: query.familyKey } } } },
+        { resourceAssignments: { some: { resource: {
+          active: true,
+          family: { key: query.familyKey },
+          versions: { some: { isCurrent: true } },
+        } } } },
+        { resources: { some: {
+          active: true,
+          family: { key: query.familyKey },
+          versions: { some: { isCurrent: true } },
+        } } },
+      ] });
+    }
+    if (query.search) {
+      filters.push({ OR: [
+        { name: { contains: query.search, mode: 'insensitive' } },
+        { slug: { contains: query.search, mode: 'insensitive' } },
+        { venueName: { contains: query.search, mode: 'insensitive' } },
+        { description: { contains: query.search, mode: 'insensitive' } },
+      ] });
+    }
+
     return prisma.programLocation.findMany({
       where: {
         ...(query.activeOnly ? { active: true } : {}),
         ...(query.countryCode ? { country: { code: query.countryCode } } : {}),
-        ...(query.familyKey ? { programs: { some: { active: true, family: { key: query.familyKey } } } } : {}),
-        ...(query.search
-          ? {
-              OR: [
-                { name: { contains: query.search, mode: 'insensitive' } },
-                { slug: { contains: query.search, mode: 'insensitive' } },
-                { venueName: { contains: query.search, mode: 'insensitive' } },
-                { description: { contains: query.search, mode: 'insensitive' } },
-              ],
-            }
-          : {}),
+        ...(filters.length > 0 ? { AND: filters } : {}),
       },
       orderBy: [{ country: { name: 'asc' } }, { name: 'asc' }],
       select: {

@@ -32,6 +32,7 @@ const NEXT_STAGES = [
 
 export const conciergeStructuredResponseSchema = z.object({
   replyText: z.string().trim().min(1),
+  replyIntent: z.enum(['ANSWER_QUESTION', 'CONTINUE_FLOW', 'CHANGE_TOPIC']).optional(),
   shouldAskFollowUp: z.boolean(),
   detectedNeed: z.enum(DETECTED_NEEDS),
   missingFields: z.array(z.string()).transform((fields) => {

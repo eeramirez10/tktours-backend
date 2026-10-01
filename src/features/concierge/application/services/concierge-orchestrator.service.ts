@@ -4,7 +4,7 @@ import { prisma } from '../../../../shared/infrastructure/database/prisma.js';
 import { PrismaConversationRepository } from '../../../conversations/infrastructure/repositories/prisma-conversation.repository.js';
 import { RefreshInquiryRecommendationsUseCase } from '../../../inquiries/application/use-cases/refresh-inquiry-recommendations.use-case.js';
 import { PrismaInquiryRepository } from '../../../inquiries/infrastructure/repositories/prisma-inquiry.repository.js';
-import { OpenAiResponsesClient } from '../../infrastructure/clients/openai-response.js';
+import { OpenAiResponsesClient, type ResponsesTextResult } from '../../infrastructure/clients/openai-response.js';
 import { PrismaConciergeTurnTraceRepository } from '../../infrastructure/repositories/prisma-concierge-turn-trace.repository.js';
 import { conciergePromptVersion, conciergeSystemPrompt } from '../prompts/concierge-system.prompt.js';
 import { conciergeStructuredResponseSchema } from '../schemas/concierge-structured-response.schema.js';
@@ -143,65 +143,23 @@ export class ConciergeOrchestratorService {
         });
       }
 
-      rawResponseText = firstResponse.outputText;
-      const functionCalls = firstResponse.raw.output.filter((item) => item.type === 'function_call');
-
-      let finalText = firstResponse.outputText;
-      let finalResponseId = firstResponse.id;
-
-      if (functionCalls.length > 0) {
-        const toolOutputs: Array<Record<string, unknown>> = [];
-
-        for (const call of functionCalls) {
-          if (call.type !== 'function_call') continue;
-
-          const args = this.safeParseArguments(call.arguments);
-
-          await this.turnTraceRepository.createToolCall({
-            turnId: turn.id,
-            callId: call.call_id,
-            toolName: call.name,
-            argumentsJson: args,
-          });
-
-          try {
-            const result = await this.toolExecutor.execute(call.name, args);
-
-            await this.turnTraceRepository.completeToolCall({
-              turnId: turn.id,
-              callId: call.call_id,
-              outputJson: result,
-            });
-
-            toolOutputs.push({
-              type: 'function_call_output',
-              call_id: call.call_id,
-              output: JSON.stringify(result),
-            });
-          } catch (error) {
-            await this.turnTraceRepository.failToolCall({
-              turnId: turn.id,
-              callId: call.call_id,
-              errorMessage: this.getErrorMessage(error),
-            });
-            throw error;
-          }
-        }
-
-        const secondResponse = await this.responsesClient.createTextResponse({
-          instructions: conciergeSystemPrompt,
-          input: toolOutputs,
-          previousResponseId: firstResponse.id,
-        });
-
-        finalText = secondResponse.outputText;
-        finalResponseId = secondResponse.id;
-        rawResponseText = secondResponse.outputText;
-      }
-
+      const { response, usedToolNames } = await this.completeToolCalls(firstResponse, turn.id);
+      const finalText = response.outputText;
+      const finalResponseId = response.id;
+      rawResponseText = finalText;
       const parsed = this.parseStructuredResponse(finalText);
       const policyResult = await this.applyReplyPolicy(parsed, context, {
-        resourceContentSearchUsed: functionCalls.some((call) => call.type === 'function_call' && call.name === 'search_resource_content'),
+        resourceContentSearchUsed: usedToolNames.has('search_resource_content'),
+        dataToolUsed: [...usedToolNames].some((name) => [
+          'list_destination_overview',
+          'list_available_resources',
+          'search_resource_content',
+          'list_available_programs',
+          'list_available_locations',
+          'list_weeks_options',
+          'get_program_detail',
+          'find_matching_programs',
+        ].includes(name)),
       });
       const normalized = policyResult.structured;
 
@@ -247,6 +205,67 @@ export class ConciergeOrchestratorService {
       });
       throw error;
     }
+  }
+
+  private async completeToolCalls(firstResponse: ResponsesTextResult, turnId: string): Promise<{
+    response: ResponsesTextResult;
+    usedToolNames: Set<string>;
+  }> {
+    let response = firstResponse;
+    const usedToolNames = new Set<string>();
+
+    for (let round = 0; round < 5; round += 1) {
+      const functionCalls = response.raw.output.filter((item) => item.type === 'function_call');
+      if (functionCalls.length === 0) break;
+      const toolOutputs: Array<Record<string, unknown>> = [];
+
+      for (const call of functionCalls) {
+        if (call.type !== 'function_call') continue;
+        usedToolNames.add(call.name);
+        const args = this.safeParseArguments(call.arguments);
+
+        await this.turnTraceRepository.createToolCall({
+          turnId,
+          callId: call.call_id,
+          toolName: call.name,
+          argumentsJson: args,
+        });
+
+        try {
+          const result = await this.toolExecutor.execute(call.name, args);
+          await this.turnTraceRepository.completeToolCall({
+            turnId,
+            callId: call.call_id,
+            outputJson: result,
+          });
+          toolOutputs.push({
+            type: 'function_call_output',
+            call_id: call.call_id,
+            output: JSON.stringify(result),
+          });
+        } catch (error) {
+          await this.turnTraceRepository.failToolCall({
+            turnId,
+            callId: call.call_id,
+            errorMessage: this.getErrorMessage(error),
+          });
+          throw error;
+        }
+      }
+
+      response = await this.responsesClient.createTextResponse({
+        instructions: conciergeSystemPrompt,
+        input: toolOutputs,
+        tools: [...conciergeTools] as unknown as Array<Record<string, unknown>>,
+        previousResponseId: response.id,
+      });
+    }
+
+    if (response.raw.output.some((item) => item.type === 'function_call')) {
+      throw new ValidationAppError('Model exceeded the maximum number of tool rounds');
+    }
+
+    return { response, usedToolNames };
   }
 
   private async buildTurnContext(params: {
@@ -589,7 +608,7 @@ export class ConciergeOrchestratorService {
   private async applyReplyPolicy(
     parsed: ReturnType<ConciergeOrchestratorService['parseStructuredResponse']>,
     context: ConciergeTurnContext,
-    options: { resourceContentSearchUsed: boolean },
+    options: { resourceContentSearchUsed: boolean; dataToolUsed: boolean },
   ): Promise<{
     structured: ReturnType<ConciergeOrchestratorService['parseStructuredResponse']>;
     trace: {
@@ -657,6 +676,35 @@ export class ConciergeOrchestratorService {
         contextPatch,
         outboundMediaUrl: null,
         outboundMediaUrls: null,
+      };
+    }
+
+    const asksAboutOptions = detectedIntent === 'ASK_AVAILABLE_COUNTRIES' || detectedIntent === 'ASK_AVAILABLE_PROGRAMS';
+    const isAnsweringQuestion = parsed.replyIntent === 'ANSWER_QUESTION'
+      || options.resourceContentSearchUsed
+      || asksAboutOptions
+      || (options.dataToolUsed && /[¿?]/.test(context.latestMessage?.text ?? ''));
+
+    if (isAnsweringQuestion || parsed.replyIntent === 'CHANGE_TOPIC') {
+      const shouldGroundAnswer = isAnsweringQuestion
+        && !options.dataToolUsed
+        && (parsed.detectedNeed !== 'UNKNOWN' || asksAboutOptions);
+      const replyText = shouldGroundAnswer
+        ? await this.buildGroundedAnswer(context)
+        : parsed.replyText;
+      return {
+        structured: {
+          ...parsed,
+          replyText,
+          missingFields: [],
+          shouldAskFollowUp: shouldGroundAnswer ? false : parsed.shouldAskFollowUp,
+          shouldRefreshRecommendations: false,
+        },
+        trace: {
+          strategy: 'none',
+          details: { reason: isAnsweringQuestion ? 'answer_customer_question' : 'customer_changed_topic' },
+        },
+        contextPatch,
       };
     }
 
@@ -973,6 +1021,31 @@ export class ConciergeOrchestratorService {
       },
       contextPatch,
     };
+  }
+
+  private async buildGroundedAnswer(context: ConciergeTurnContext): Promise<string> {
+    const inquiry = context.activeInquiry;
+    const question = context.latestMessage?.text ?? '';
+    const overview = await this.toolExecutor.execute('list_destination_overview', {
+      familyKey: inquiry?.family?.key ?? undefined,
+      countryCode: inquiry?.country?.code ?? undefined,
+      studentAge: inquiry?.studentAge ?? undefined,
+      targetDate: this.getInquiryTargetDate(inquiry) ?? undefined,
+    });
+    const content = inquiry?.id && inquiry.country?.code
+      ? await this.toolExecutor.execute('search_resource_content', { inquiryId: inquiry.id, query: question })
+      : null;
+    const response = await this.responsesClient.createTextResponse({
+      instructions: [
+        'Eres una asesora de TKTours. Responde en español la pregunta actual del cliente con naturalidad y brevedad.',
+        'Usa únicamente los datos de destinations y matches. Si no confirman el detalle preguntado, dilo claramente y ofrece seguimiento con un asesor.',
+        'No inventes precios, fechas, actividades, folletos ni disponibilidad. Los precios confirmados siempre se expresan como "desde" con su moneda.',
+        'Distingue un programa sin folleto de un folleto disponible. No vuelvas a pedir datos pendientes en esta respuesta.',
+        'Responde solo texto plano.',
+      ].join('\n'),
+      input: JSON.stringify({ question, overview, content }),
+    });
+    return response.outputText.trim() || 'Con gusto te ayudo. Ese detalle no aparece confirmado en la información disponible; un asesor de TKTours puede revisarlo contigo.';
   }
 
   private async resolveCampBrochureState(
@@ -2632,18 +2705,19 @@ export class ConciergeOrchestratorService {
       return `Opciones disponibles:\n${circuitOptions.map((item, index) => `${index + 1}) ${item}`).join('\n')}`;
     }
 
-    const countriesResult = await this.toolExecutor.execute('list_available_countries', {
-      activeOnly: true,
-    });
+    const familyKey = context?.activeInquiry?.family?.key;
+    const countriesResult = familyKey
+      ? await this.toolExecutor.execute('list_destination_overview', { familyKey })
+      : await this.toolExecutor.execute('list_available_countries', { activeOnly: true });
 
-    const countries =
-      countriesResult &&
-      typeof countriesResult === 'object' &&
-      Array.isArray((countriesResult as { countries?: unknown }).countries)
-        ? (countriesResult as { countries: Array<{ name?: unknown }> }).countries
-            .map((country) => (typeof country?.name === 'string' ? country.name.trim() : null))
-            .filter((name): name is string => Boolean(name))
-        : [];
+    const available = countriesResult && typeof countriesResult === 'object'
+      ? countriesResult as { countries?: Array<{ name?: unknown }>; destinations?: Array<{ countryName?: unknown }> }
+      : null;
+    const countries = (familyKey
+      ? available?.destinations?.map((country) => country.countryName)
+      : available?.countries?.map((country) => country.name))
+      ?.filter((name): name is string => typeof name === 'string' && name.trim().length > 0)
+      .map((name) => name.trim()) ?? [];
 
     if (!countries.length) {
       return null;

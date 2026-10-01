@@ -18,6 +18,7 @@ import {
   ListAvailableLocationsArgs,
   ListAvailableProgramsArgs,
   ListAvailableResourcesArgs,
+  ListDestinationOverviewArgs,
   SearchResourceContentArgs,
   ListWeeksOptionsArgs,
   UpdateInquiryArgs,
@@ -37,7 +38,7 @@ type DetectedIntent =
   | 'UNKNOWN';
 
 type ExtractedInquiryFields = {
-  countryCode: 'CA' | 'US' | 'GB' | 'IT' | 'FR' | 'IE' | 'MX' | 'EUROPE' | 'SOUTH_AMERICA' | 'ASIA' | 'OTHER_DESTINATIONS' | null;
+  countryCode: string | null;
   studentAge: number | null;
   residenceCountry: string | null;
   cityOfResidence: string | null;
@@ -118,6 +119,8 @@ export class ConciergeToolExecutorService {
         return this.getProgramDetail(args as GetProgramDetailArgs);
       case 'list_available_countries':
         return this.listAvailableCountries(args as ListAvailableCountriesArgs);
+      case 'list_destination_overview':
+        return this.listDestinationOverview(args as ListDestinationOverviewArgs);
       case 'list_available_locations':
         return this.listAvailableLocations(args as ListAvailableLocationsArgs);
       case 'list_available_programs':
@@ -247,6 +250,8 @@ export class ConciergeToolExecutorService {
       return defaultExtractedFields;
     }
 
+    const countries = await this.catalogRepository.findCountries({ activeOnly: true });
+    const allowedCountryCodes = new Set(countries.map((country) => country.code));
     const nowIso = args.nowIso ?? new Date().toISOString();
     const prompt = [
       'Extract structured lead fields from the latest user message for a study-abroad concierge.',
@@ -276,7 +281,7 @@ export class ConciergeToolExecutorService {
       '- latestMessage="Vivo en México, en Guadalajara" => residenceCountry="México", cityOfResidence="Guadalajara".',
       'Return strict JSON exactly with keys:',
       '{"countryCode","studentAge","residenceCountry","cityOfResidence","tripDays","familyKey","accommodationKey","preferredStartMonth","preferredStartYear","preferredStartUndecided","weeks","weeksUndecided","firstName","lastName","email","confidence"}',
-      'Allowed countryCode: CA, US, GB, IT, FR, IE, MX, EUROPE, SOUTH_AMERICA, ASIA, OTHER_DESTINATIONS, or null.',
+      `Allowed countryCode values and names: ${JSON.stringify(countries.map((country) => ({ code: country.code, name: country.name })))}. Return null when the destination is unclear or absent from this list.`,
       'Allowed familyKey: CAMP, LANGUAGE_COURSE, SCHOOL_PROGRAM, or null.',
       'Allowed accommodationKey: HOST_FAMILY, UNIVERSITY_RESIDENCE, SHARED_APARTMENT, or null.',
       'preferredStartMonth must be 1..12 or null.',
@@ -331,7 +336,7 @@ export class ConciergeToolExecutorService {
     }
 
     return {
-      countryCode: this.asCountryCode(llmResult?.countryCode),
+      countryCode: this.asCountryCode(llmResult?.countryCode, allowedCountryCodes),
       studentAge: this.asPositiveInt(llmResult?.studentAge),
       residenceCountry: this.asNonEmptyString(llmResult?.residenceCountry),
       cityOfResidence: this.asNonEmptyString(llmResult?.cityOfResidence),
@@ -350,20 +355,11 @@ export class ConciergeToolExecutorService {
     };
   }
 
-  private asCountryCode(value: unknown): ExtractedInquiryFields['countryCode'] {
-    return value === 'CA' ||
-      value === 'US' ||
-      value === 'GB' ||
-      value === 'IT' ||
-      value === 'FR' ||
-      value === 'IE' ||
-      value === 'MX' ||
-      value === 'EUROPE' ||
-      value === 'SOUTH_AMERICA' ||
-      value === 'ASIA' ||
-      value === 'OTHER_DESTINATIONS'
-      ? value
-      : null;
+  private asCountryCode(value: unknown, allowedCodes?: ReadonlySet<string>): string | null {
+    if (typeof value !== 'string') return null;
+    const code = value.trim().toUpperCase();
+    if (!/^[A-Z_]{2,32}$/.test(code)) return null;
+    return allowedCodes && !allowedCodes.has(code) ? null : code;
   }
 
   private asFamilyKey(value: unknown): ExtractedInquiryFields['familyKey'] {
@@ -476,6 +472,85 @@ export class ConciergeToolExecutorService {
     };
   }
 
+  private async listDestinationOverview(args: ListDestinationOverviewArgs) {
+    const [countries, programs, resourceResult] = await Promise.all([
+      this.catalogRepository.findCountries({ activeOnly: true }),
+      this.catalogRepository.findPrograms({
+        activeOnly: true,
+        familyKey: args.familyKey,
+        countryCode: args.countryCode,
+      }),
+      this.listAvailableResources({
+        activeOnly: true,
+        familyKey: args.familyKey,
+        countryCode: args.countryCode,
+        studentAge: args.studentAge,
+        targetDate: args.targetDate,
+      }),
+    ]);
+
+    const today = new Date().toISOString().slice(0, 10);
+    const resources = resourceResult.resources.filter((resource) =>
+      args.targetDate || !resource.validUntil || resource.validUntil >= today);
+    const limit = args.countryCode ? 20 : 3;
+    const destinations = countries
+      .filter((country) => !args.countryCode || country.code === args.countryCode)
+      .map((country) => {
+        const countryPrograms = programs.filter((program) =>
+          program.country.code === country.code &&
+          (args.studentAge == null ||
+            ((program.minAge == null || program.minAge <= args.studentAge) &&
+              (program.maxAge == null || program.maxAge >= args.studentAge))));
+        const countryResources = resources.filter((resource) => resource.countryCode === country.code);
+        if (countryPrograms.length === 0 && countryResources.length === 0) return null;
+
+        return {
+          countryCode: country.code,
+          countryName: this.toSpanishCountryName(country.code, country.name),
+          cities: [...new Set([
+            ...countryPrograms.map((program) => program.location?.name).filter((name): name is string => Boolean(name)),
+            ...countryResources.flatMap((resource) => resource.locationNames.length > 0
+              ? resource.locationNames
+              : resource.locationName ? [resource.locationName] : []),
+          ])].sort((a, b) => a.localeCompare(b, 'es')),
+          programCount: countryPrograms.length,
+          brochureCount: countryResources.filter((resource) => resource.type === 'BROCHURE').length,
+          programs: countryPrograms.slice(0, limit).map((program) => ({
+            slug: program.slug,
+            name: program.name,
+            familyKey: program.family.key,
+            description: program.description,
+            minAge: program.minAge,
+            maxAge: program.maxAge,
+            minWeeks: program.minWeeks,
+            maxWeeks: program.maxWeeks,
+          })),
+          resources: countryResources.slice(0, limit).map((resource) => ({
+            id: resource.id,
+            title: resource.title,
+            type: resource.type,
+            familyKey: resource.familyKey,
+            programName: resource.programName,
+            cities: resource.locationNames,
+            description: resource.description,
+            summary: resource.currentVersion?.summary?.slice(0, args.countryCode ? 700 : 180) ?? null,
+            minAge: resource.minAge,
+            maxAge: resource.maxAge,
+            minWeeks: resource.minWeeks,
+            maxWeeks: resource.maxWeeks,
+            validFrom: resource.validFrom,
+            validUntil: resource.validUntil,
+            priceFrom: resource.priceFrom,
+            priceCurrency: resource.priceCurrency,
+            priceUnit: resource.priceUnit,
+          })),
+        };
+      })
+      .filter((destination): destination is NonNullable<typeof destination> => destination !== null);
+
+    return { familyKey: args.familyKey ?? null, destinations };
+  }
+
   private async listAvailablePrograms(args: ListAvailableProgramsArgs) {
     const programs = await this.catalogRepository.findPrograms({
       activeOnly: args.activeOnly ?? true,
@@ -551,7 +626,10 @@ export class ConciergeToolExecutorService {
         ...((args.activeOnly ?? true) ? { active: true } : {}),
         ...(args.countryCode ? { country: { code: args.countryCode } } : {}),
         ...(args.familyKey ? { family: { key: args.familyKey } } : {}),
-        ...(args.locationSlug ? { locationAssignments: { some: { location: { slug: args.locationSlug } } } } : {}),
+        ...(args.locationSlug ? { OR: [
+          { locationAssignments: { some: { location: { slug: args.locationSlug } } } },
+          { location: { slug: args.locationSlug } },
+        ] } : {}),
         ...(args.programSlug ? { program: { slug: args.programSlug } } : {}),
         ...(args.type ? { type: args.type } : {}),
         ...(compatibilityFilters.length > 0 ? { AND: compatibilityFilters } : {}),
@@ -593,6 +671,7 @@ export class ConciergeToolExecutorService {
           select: {
             slug: true,
             name: true,
+            rule: { select: { minWeeks: true, maxWeeks: true, weekOptions: true } },
             startWindows: {
               where: { active: true },
               select: { seasonKey: true },
@@ -677,6 +756,10 @@ export class ConciergeToolExecutorService {
         venueName: resource.location?.venueName ?? resource.locationAssignments[0]?.location.venueName ?? null,
         programSlug: resource.program?.slug ?? null,
         programName: resource.program?.name ?? null,
+        minWeeks: resource.program?.rule?.minWeeks
+          ?? (resource.program?.rule?.weekOptions.length ? Math.min(...resource.program.rule.weekOptions) : null),
+        maxWeeks: resource.program?.rule?.maxWeeks
+          ?? (resource.program?.rule?.weekOptions.length ? Math.max(...resource.program.rule.weekOptions) : null),
         programSeasonKeys: Array.from(
           new Set((resource.program?.startWindows ?? []).map((window) => window.seasonKey).filter(Boolean)),
         ),
@@ -740,7 +823,11 @@ export class ConciergeToolExecutorService {
       return { matches: [], reason: 'active inquiry was not found' };
     }
 
-    if (!inquiry.countryId && inquiry.resourceSends.length === 0) {
+    const resourceId = typeof args.resourceId === 'string' && this.isUuid(args.resourceId.trim())
+      ? args.resourceId.trim()
+      : null;
+
+    if (!inquiry.countryId && inquiry.resourceSends.length === 0 && !resourceId) {
       return { matches: [], reason: 'the inquiry does not identify a destination or previously sent resource' };
     }
 
@@ -762,9 +849,6 @@ export class ConciergeToolExecutorService {
       );
     }
 
-    const resourceId = typeof args.resourceId === 'string' && this.isUuid(args.resourceId.trim())
-      ? args.resourceId.trim()
-      : null;
     const sentResourceIds = inquiry.resourceSends.map((send) => send.resourceId);
     const resourceWhere: Prisma.ResourceWhereInput = {
       active: true,
@@ -777,7 +861,10 @@ export class ConciergeToolExecutorService {
       ...(inquiry.familyId ? { familyId: inquiry.familyId } : {}),
       ...(inquiry.programId ? { programId: inquiry.programId } : {}),
       ...(inquiry.locationId
-        ? { locationAssignments: { some: { locationId: inquiry.locationId } } }
+        ? { OR: [
+            { locationAssignments: { some: { locationId: inquiry.locationId } } },
+            { locationId: inquiry.locationId },
+          ] }
         : {}),
       ...(resourceFilters.length > 0 ? { AND: resourceFilters } : {}),
     };

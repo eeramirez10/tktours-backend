@@ -1,0 +1,190 @@
+import assert from 'node:assert/strict';
+import test from 'node:test';
+
+import { ConciergeOrchestratorService } from './concierge-orchestrator.service.js';
+import { ConciergeToolExecutorService } from './concierge-tool-executor.service.js';
+
+const country = { code: 'CH', name: 'Suiza', active: true };
+
+test('destination overview filters by family and includes resource summaries', async () => {
+  const filters: unknown[] = [];
+  const executor = Object.create(ConciergeToolExecutorService.prototype) as {
+    catalogRepository: {
+      findCountries: () => Promise<typeof country[]>;
+      findPrograms: (args: unknown) => Promise<Array<Record<string, unknown>>>;
+    };
+    listAvailableResources: (args: unknown) => Promise<{ resources: Array<Record<string, unknown>> }>;
+    listDestinationOverview: (args: { familyKey: 'CAMP' }) => Promise<{
+      destinations: Array<{
+        countryCode: string;
+        cities: string[];
+        brochureCount: number;
+        resources: Array<{ summary: string | null; priceFrom: number | null }>;
+      }>;
+    }>;
+  };
+  executor.catalogRepository = {
+    findCountries: async () => [country],
+    findPrograms: async (args) => {
+      filters.push(args);
+      return [{
+        slug: 'swiss-camp', name: 'Camp Suiza', description: 'Campamento de verano',
+        country, family: { key: 'CAMP' }, location: null,
+        minAge: 7, maxAge: 17, minWeeks: 1, maxWeeks: 4,
+      }];
+    },
+  };
+  executor.listAvailableResources = async (args) => {
+    filters.push(args);
+    return { resources: [{
+      id: 'resource-1', title: 'Folleto Suiza', type: 'BROCHURE',
+      countryCode: 'CH', familyKey: 'CAMP', programName: 'Camp Suiza',
+      locationNames: ['Zúrich'], locationName: 'Zúrich',
+      description: 'Campamento en Zúrich', currentVersion: { summary: 'Actividades y alojamiento' },
+      minAge: 7, maxAge: 17, minWeeks: 1, maxWeeks: 4,
+      validFrom: null, validUntil: null, priceFrom: 1200,
+      priceCurrency: 'CHF', priceUnit: 'semana',
+    }] };
+  };
+
+  const result = await executor.listDestinationOverview({ familyKey: 'CAMP' });
+  assert.equal(result.destinations.length, 1);
+  assert.equal(result.destinations[0]?.countryCode, 'CH');
+  assert.deepEqual(result.destinations[0]?.cities, ['Zúrich']);
+  assert.equal(result.destinations[0]?.brochureCount, 1);
+  assert.equal(result.destinations[0]?.resources[0]?.summary, 'Actividades y alojamiento');
+  assert.equal(result.destinations[0]?.resources[0]?.priceFrom, 1200);
+  assert.equal(filters.every((args) => (args as { familyKey?: string }).familyKey === 'CAMP'), true);
+});
+
+test('field extraction accepts active countries beyond the former fixed list', async () => {
+  const executor = Object.create(ConciergeToolExecutorService.prototype) as {
+    catalogRepository: { findCountries: () => Promise<typeof country[]> };
+    askJson: () => Promise<Record<string, unknown>>;
+    extractInquiryFields: (args: { latestMessage: string }) => Promise<{ countryCode: string | null }>;
+  };
+  executor.catalogRepository = { findCountries: async () => [country] };
+  executor.askJson = async () => ({ countryCode: 'CH', confidence: 1 });
+
+  const result = await executor.extractInquiryFields({ latestMessage: 'Me interesa Suiza' });
+  assert.equal(result.countryCode, 'CH');
+});
+
+test('a turn can query destinations and then a brochure before answering', async () => {
+  const call = (id: string, name: string) => ({
+    id,
+    outputText: '',
+    raw: { output: [{ type: 'function_call', name, call_id: id, arguments: '{}' }] },
+  });
+  const previousResponseIds: string[] = [];
+  const toolNames: string[] = [];
+  const orchestrator = Object.create(ConciergeOrchestratorService.prototype) as {
+    responsesClient: { createTextResponse: (args: { previousResponseId?: string; tools?: unknown[] }) => Promise<unknown> };
+    toolExecutor: { execute: (name: string) => Promise<Record<string, unknown>> };
+    turnTraceRepository: {
+      createToolCall: () => Promise<void>;
+      completeToolCall: () => Promise<void>;
+      failToolCall: () => Promise<void>;
+    };
+    completeToolCalls: (response: unknown, turnId: string) => Promise<{
+      response: { outputText: string };
+      usedToolNames: Set<string>;
+    }>;
+  };
+  orchestrator.responsesClient = {
+    createTextResponse: async (args) => {
+      previousResponseIds.push(args.previousResponseId ?? '');
+      assert.ok(args.tools?.length);
+      return previousResponseIds.length === 1
+        ? call('response-2', 'list_available_resources')
+        : { id: 'response-3', outputText: '{"replyText":"Tenemos opciones en Suiza"}', raw: { output: [] } };
+    },
+  };
+  orchestrator.toolExecutor = {
+    execute: async (name) => {
+      toolNames.push(name);
+      return { destinations: [] };
+    },
+  };
+  orchestrator.turnTraceRepository = {
+    createToolCall: async () => {},
+    completeToolCall: async () => {},
+    failToolCall: async () => {},
+  };
+
+  const result = await orchestrator.completeToolCalls(call('response-1', 'list_destination_overview'), 'turn-1');
+  assert.deepEqual(previousResponseIds, ['response-1', 'response-2']);
+  assert.deepEqual(toolNames, ['list_destination_overview', 'list_available_resources']);
+  assert.equal(result.response.outputText, '{"replyText":"Tenemos opciones en Suiza"}');
+  assert.equal(result.usedToolNames.has('list_available_resources'), true);
+});
+
+test('an intermediate customer question keeps the answer instead of forcing the missing age', async () => {
+  const orchestrator = Object.create(ConciergeOrchestratorService.prototype) as {
+    toolExecutor: { execute: (name: string) => Promise<Record<string, unknown>> };
+    responsesClient: { createTextResponse: () => Promise<{ outputText: string }> };
+    applyReplyPolicy: (parsed: Record<string, unknown>, context: unknown, options: unknown) => Promise<{
+      structured: { replyText: string; missingFields: string[] };
+      trace: { details?: Record<string, unknown> };
+    }>;
+  };
+  orchestrator.toolExecutor = {
+    execute: async (name) => name === 'detect_user_intent'
+      ? { intent: 'ASK_AVAILABLE_PROGRAMS' }
+      : { menuWasShown: true, handoffStep: 'none', confidence: 0.9 },
+  };
+  orchestrator.responsesClient = {
+    createTextResponse: async () => ({ outputText: '¿Qué edad tiene el estudiante?' }),
+  };
+  const context = {
+    conversation: {
+      currentStage: 'QUALIFY_AGE',
+      messages: [{ id: 'message-1', direction: 'INBOUND', text: '¿Qué incluye el campamento?', createdAt: new Date() }],
+    },
+    latestMessage: { id: 'message-1', direction: 'INBOUND', text: '¿Qué incluye el campamento?', createdAt: new Date() },
+    activeInquiry: {
+      id: 'inquiry-1', family: { key: 'LANGUAGE_COURSE' }, country: { code: 'CH' },
+      studentAge: null, qualificationJson: {},
+    },
+  };
+  const parsed = {
+    replyText: 'El folleto indica que incluye alojamiento y actividades.',
+    replyIntent: 'ANSWER_QUESTION',
+    detectedNeed: 'LANGUAGE_COURSE',
+    missingFields: ['studentAge'],
+    shouldAskFollowUp: false,
+    nextStage: 'QUALIFY_AGE',
+  };
+
+  const result = await orchestrator.applyReplyPolicy(parsed, context, { resourceContentSearchUsed: true, dataToolUsed: true });
+  assert.equal(result.structured.replyText, parsed.replyText);
+  assert.deepEqual(result.structured.missingFields, []);
+  assert.equal(result.trace.details?.reason, 'answer_customer_question');
+
+  orchestrator.toolExecutor.execute = async (name) => name === 'detect_user_intent'
+    ? { intent: 'UNKNOWN' }
+    : { menuWasShown: true, handoffStep: 'none', confidence: 0.9 };
+  const followUp = await orchestrator.applyReplyPolicy({
+    ...parsed,
+    replyIntent: 'CONTINUE_FLOW',
+    replyText: 'Continuamos con tu solicitud.',
+  }, context, { resourceContentSearchUsed: false, dataToolUsed: false });
+  assert.equal(followUp.structured.replyText, '¿Qué edad tiene el estudiante?');
+  assert.deepEqual(followUp.structured.missingFields, ['studentAge']);
+
+  const queriedTools: string[] = [];
+  orchestrator.toolExecutor.execute = async (name) => {
+    queriedTools.push(name);
+    if (name === 'detect_user_intent') return { intent: 'ASK_AVAILABLE_PROGRAMS' };
+    if (name === 'evaluate_policy_signals') return { menuWasShown: true, handoffStep: 'none' };
+    if (name === 'list_destination_overview') return { destinations: [{ countryName: 'Suiza' }] };
+    return { matches: [{ excerpt: 'Incluye alojamiento' }] };
+  };
+  orchestrator.responsesClient.createTextResponse = async () => ({ outputText: 'El folleto confirma alojamiento.' });
+  const grounded = await orchestrator.applyReplyPolicy(parsed, context, {
+    resourceContentSearchUsed: false,
+    dataToolUsed: false,
+  });
+  assert.equal(grounded.structured.replyText, 'El folleto confirma alojamiento.');
+  assert.deepEqual(queriedTools.slice(-2), ['list_destination_overview', 'search_resource_content']);
+});

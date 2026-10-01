@@ -6,6 +6,7 @@ export type ConciergeToolName =
   | 'detect_user_intent'
   | 'evaluate_policy_signals'
   | 'list_available_countries'
+  | 'list_destination_overview'
   | 'list_available_locations'
   | 'list_available_programs'
   | 'list_available_resources'
@@ -37,6 +38,13 @@ export type GetProgramDetailArgs = {
 
 export type ListAvailableCountriesArgs = {
   activeOnly?: boolean;
+};
+
+export type ListDestinationOverviewArgs = {
+  familyKey?: 'CAMP' | 'LANGUAGE_COURSE' | 'SCHOOL_PROGRAM';
+  countryCode?: string;
+  studentAge?: number;
+  targetDate?: string;
 };
 
 export type ListAvailableProgramsArgs = {

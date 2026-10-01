@@ -81,6 +81,23 @@ export const conciergeTools = [
   },
   {
     type: 'function',
+    name: 'list_destination_overview',
+    description:
+      'Consult current catalog programs and deliverable PDF resources grouped by destination. Use for questions about available countries, cities, programs, brochures, summaries, ages, dates or prices. Filter by the selected family and country when known. A country without a brochure is identified explicitly.',
+    parameters: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        familyKey: { type: 'string', enum: ['CAMP', 'LANGUAGE_COURSE', 'SCHOOL_PROGRAM'] },
+        countryCode: { type: 'string' },
+        studentAge: { type: 'number' },
+        targetDate: { type: 'string', description: 'ISO date YYYY-MM-DD for the intended start.' },
+      },
+      required: [],
+    },
+  },
+  {
+    type: 'function',
     name: 'list_available_programs',
     description: 'List active programs available in the catalog, optionally filtered by country and family.',
     parameters: {
