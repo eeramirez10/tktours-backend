@@ -46,6 +46,8 @@ const listSelect = {
       id: true,
       slug: true,
       name: true,
+      minAge: true,
+      maxAge: true,
       rule: {
         select: {
           minWeeks: true,
@@ -201,6 +203,8 @@ function mapListResource(resource: ResourceListRecord): ResourceListItem {
         id: resource.program.id,
         slug: resource.program.slug,
         name: resource.program.name,
+        minAge: resource.program.minAge,
+        maxAge: resource.program.maxAge,
         minWeeks,
         maxWeeks,
       }

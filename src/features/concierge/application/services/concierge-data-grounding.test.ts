@@ -57,6 +57,32 @@ test('destination overview filters by family and includes resource summaries', a
   assert.equal(filters.every((args) => (args as { familyKey?: string }).familyKey === 'CAMP'), true);
 });
 
+test('resource age filters use the resource bound before the program bound', () => {
+  const executor = Object.create(ConciergeToolExecutorService.prototype) as {
+    resourceAgeCompatibilityFilters: (age: number) => unknown[];
+  };
+  assert.deepEqual(executor.resourceAgeCompatibilityFilters(16), [
+    {
+      OR: [
+        { minAge: { lte: 16 } },
+        { minAge: null, OR: [
+          { programId: null },
+          { program: { OR: [{ minAge: null }, { minAge: { lte: 16 } }] } },
+        ] },
+      ],
+    },
+    {
+      OR: [
+        { maxAge: { gte: 16 } },
+        { maxAge: null, OR: [
+          { programId: null },
+          { program: { OR: [{ maxAge: null }, { maxAge: { gte: 16 } }] } },
+        ] },
+      ],
+    },
+  ]);
+});
+
 test('field extraction accepts active countries beyond the former fixed list', async () => {
   const executor = Object.create(ConciergeToolExecutorService.prototype) as {
     catalogRepository: { findCountries: () => Promise<typeof country[]> };

@@ -133,6 +133,8 @@ export type ResourceProgram = {
   id: string;
   slug: string;
   name: string;
+  minAge: number | null;
+  maxAge: number | null;
   minWeeks: number | null;
   maxWeeks: number | null;
 };

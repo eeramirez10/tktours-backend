@@ -606,6 +606,29 @@ export class ConciergeToolExecutorService {
     };
   }
 
+  private resourceAgeCompatibilityFilters(studentAge: number): Prisma.ResourceWhereInput[] {
+    return [
+      {
+        OR: [
+          { minAge: { lte: studentAge } },
+          { minAge: null, OR: [
+            { programId: null },
+            { program: { OR: [{ minAge: null }, { minAge: { lte: studentAge } }] } },
+          ] },
+        ],
+      },
+      {
+        OR: [
+          { maxAge: { gte: studentAge } },
+          { maxAge: null, OR: [
+            { programId: null },
+            { program: { OR: [{ maxAge: null }, { maxAge: { gte: studentAge } }] } },
+          ] },
+        ],
+      },
+    ];
+  }
+
   private async listAvailableResources(args: ListAvailableResourcesArgs) {
     const studentAge = typeof args.studentAge === 'number' && Number.isFinite(args.studentAge)
       ? Math.floor(args.studentAge)
@@ -614,10 +637,7 @@ export class ConciergeToolExecutorService {
     const compatibilityFilters: Prisma.ResourceWhereInput[] = [];
 
     if (studentAge != null) {
-      compatibilityFilters.push(
-        { OR: [{ minAge: null }, { minAge: { lte: studentAge } }] },
-        { OR: [{ maxAge: null }, { maxAge: { gte: studentAge } }] },
-      );
+      compatibilityFilters.push(...this.resourceAgeCompatibilityFilters(studentAge));
     }
 
     if (targetDate) {
@@ -677,6 +697,8 @@ export class ConciergeToolExecutorService {
           select: {
             slug: true,
             name: true,
+            minAge: true,
+            maxAge: true,
             rule: { select: { minWeeks: true, maxWeeks: true, weekOptions: true } },
             startWindows: {
               where: { active: true },
@@ -745,8 +767,8 @@ export class ConciergeToolExecutorService {
         year: resource.year,
         validFrom: resource.validFrom?.toISOString().slice(0, 10) ?? null,
         validUntil: resource.validUntil?.toISOString().slice(0, 10) ?? null,
-        minAge: resource.minAge,
-        maxAge: resource.maxAge,
+        minAge: resource.minAge ?? resource.program?.minAge ?? null,
+        maxAge: resource.maxAge ?? resource.program?.maxAge ?? null,
         priceFrom: resource.priceFrom == null ? null : Number(resource.priceFrom),
         priceCurrency: resource.priceCurrency,
         priceUnit: resource.priceUnit,
@@ -843,10 +865,7 @@ export class ConciergeToolExecutorService {
     const resourceFilters: Prisma.ResourceWhereInput[] = [];
 
     if (inquiry.studentAge != null) {
-      resourceFilters.push(
-        { OR: [{ minAge: null }, { minAge: { lte: inquiry.studentAge } }] },
-        { OR: [{ maxAge: null }, { maxAge: { gte: inquiry.studentAge } }] },
-      );
+      resourceFilters.push(...this.resourceAgeCompatibilityFilters(inquiry.studentAge));
     }
     if (targetDate) {
       resourceFilters.push(
