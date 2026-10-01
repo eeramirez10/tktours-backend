@@ -302,11 +302,12 @@ export class ConciergeOrchestratorService {
   }
 
   private async hydrateInquiryFromLatestMessage(context: ConciergeTurnContext): Promise<ConciergeTurnContext> {
-    if (!context.activeInquiry || !context.latestMessage || context.latestMessage.direction !== 'INBOUND') {
+    if (!context.conversation || !context.latestMessage || context.latestMessage.direction !== 'INBOUND') {
       return context;
     }
 
-    const expectedField = this.getEnforcedNextField(context.activeInquiry);
+    const activeInquiry = context.activeInquiry;
+    const expectedField = activeInquiry ? this.getEnforcedNextField(activeInquiry) : null;
     const previousOutbound = this.findPreviousOutboundMessage(context);
     const extracted = await this.toolExecutor.execute('extract_inquiry_fields', {
       latestMessage: context.latestMessage.text,
@@ -316,20 +317,20 @@ export class ConciergeOrchestratorService {
         direction: message.direction,
         text: message.text,
       })),
-      inquirySnapshot: {
-        countryCode: context.activeInquiry.country?.code ?? null,
-        studentAge: context.activeInquiry.studentAge,
-        residenceCountry: this.getResidenceCountryFromInquiry(context.activeInquiry),
-        cityOfResidence: context.activeInquiry.cityOfResidence,
-        tripDays: this.getTripDaysFromInquiry(context.activeInquiry),
-        familyKey: context.activeInquiry.family?.key ?? null,
-        accommodationKey: context.activeInquiry.accommodationType?.key ?? null,
-        preferredStartMonth: context.activeInquiry.preferredStartMonth,
-        preferredStartYear: context.activeInquiry.preferredStartYear,
-        preferredStartStatus: this.getPreferredStartStatusFromInquiry(context.activeInquiry),
-        weeks: context.activeInquiry.weeks,
-        weeksStatus: this.getWeeksStatusFromInquiry(context.activeInquiry),
-      },
+      inquirySnapshot: activeInquiry ? {
+        countryCode: activeInquiry.country?.code ?? null,
+        studentAge: activeInquiry.studentAge,
+        residenceCountry: this.getResidenceCountryFromInquiry(activeInquiry),
+        cityOfResidence: activeInquiry.cityOfResidence,
+        tripDays: this.getTripDaysFromInquiry(activeInquiry),
+        familyKey: activeInquiry.family?.key ?? null,
+        accommodationKey: activeInquiry.accommodationType?.key ?? null,
+        preferredStartMonth: activeInquiry.preferredStartMonth,
+        preferredStartYear: activeInquiry.preferredStartYear,
+        preferredStartStatus: this.getPreferredStartStatusFromInquiry(activeInquiry),
+        weeks: activeInquiry.weeks,
+        weeksStatus: this.getWeeksStatusFromInquiry(activeInquiry),
+      } : null,
       nowIso: new Date().toISOString(),
     });
 
@@ -355,8 +356,8 @@ export class ConciergeOrchestratorService {
     maybeSet('weeks', (extracted as { weeks?: unknown }).weeks);
 
     const qualificationJson =
-      context.activeInquiry.qualificationJson && typeof context.activeInquiry.qualificationJson === 'object'
-        ? { ...context.activeInquiry.qualificationJson }
+      activeInquiry?.qualificationJson && typeof activeInquiry.qualificationJson === 'object'
+        ? { ...activeInquiry.qualificationJson }
         : {};
     let qualificationJsonChanged = false;
 
@@ -404,9 +405,9 @@ export class ConciergeOrchestratorService {
       inquiryUpdate.qualificationJson = qualificationJson;
     }
 
-    if (Object.keys(inquiryUpdate).length > 0) {
+    if (activeInquiry && Object.keys(inquiryUpdate).length > 0) {
       await this.inquiryRepository.update({
-        inquiryId: context.activeInquiry.id,
+        inquiryId: activeInquiry.id,
         ...inquiryUpdate,
       });
     }
@@ -418,18 +419,18 @@ export class ConciergeOrchestratorService {
 
     if (Object.keys(contactUpdate).length > 0) {
       await this.upsertInquiryContact({
-        inquiryId: context.activeInquiry.id,
-        conversationId: context.conversation?.id ?? context.activeInquiry.conversation.id,
-        contactId: context.activeInquiry.contact?.id ?? context.conversation?.contact?.id ?? null,
+        inquiryId: activeInquiry?.id ?? null,
+        conversationId: context.conversation.id,
+        contactId: activeInquiry?.contact?.id ?? context.conversation?.contact?.id ?? null,
         contactUpdate,
       });
     }
 
-    const updatedInquiry = await this.inquiryRepository.findById(context.activeInquiry.id);
+    const updatedInquiry = activeInquiry ? await this.inquiryRepository.findById(activeInquiry.id) : null;
 
     return {
       ...context,
-      activeInquiry: updatedInquiry ?? context.activeInquiry,
+      activeInquiry: updatedInquiry ?? activeInquiry,
     };
 
     function maybeSetContact(target: Record<string, unknown>, key: string, value: unknown) {
@@ -440,7 +441,7 @@ export class ConciergeOrchestratorService {
   }
 
   private async upsertInquiryContact(input: {
-    inquiryId: string;
+    inquiryId: string | null;
     conversationId: string;
     contactId: string | null;
     contactUpdate: Record<string, unknown>;
@@ -462,10 +463,12 @@ export class ConciergeOrchestratorService {
         });
       }
 
-      await tx.inquiry.update({
-        where: { id: input.inquiryId },
-        data: { contactId },
-      });
+      if (input.inquiryId) {
+        await tx.inquiry.update({
+          where: { id: input.inquiryId },
+          data: { contactId },
+        });
+      }
 
       await tx.conversation.update({
         where: { id: input.conversationId },

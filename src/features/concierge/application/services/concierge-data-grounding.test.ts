@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { ConciergeOrchestratorService } from './concierge-orchestrator.service.js';
+import { ConciergeOrchestratorService, type ConciergeTurnContext } from './concierge-orchestrator.service.js';
 import { ConciergeToolExecutorService } from './concierge-tool-executor.service.js';
 
 const country = { code: 'CH', name: 'Suiza', active: true };
@@ -68,6 +68,61 @@ test('field extraction accepts active countries beyond the former fixed list', a
 
   const result = await executor.extractInquiryFields({ latestMessage: 'Me interesa Suiza' });
   assert.equal(result.countryCode, 'CH');
+});
+
+test('field extraction asks for explicit contact names even outside the name step', async () => {
+  let extractionPrompt = '';
+  const executor = Object.create(ConciergeToolExecutorService.prototype) as {
+    catalogRepository: { findCountries: () => Promise<typeof country[]> };
+    askJson: (prompt: string) => Promise<Record<string, unknown>>;
+    extractInquiryFields: (args: { latestMessage: string; expectedField: 'studentAge' }) => Promise<{
+      firstName: string | null;
+      lastName: string | null;
+      studentAge: number | null;
+    }>;
+  };
+  executor.catalogRepository = { findCountries: async () => [country] };
+  executor.askJson = async (prompt) => {
+    extractionPrompt = prompt;
+    return { firstName: 'María Fernanda', lastName: 'López', studentAge: 16, confidence: 1 };
+  };
+
+  const result = await executor.extractInquiryFields({
+    latestMessage: 'Soy María Fernanda López y tengo 16 años',
+    expectedField: 'studentAge',
+  });
+  assert.match(extractionPrompt, /spontaneous self-introductions/);
+  assert.deepEqual([result.firstName, result.lastName, result.studentAge], ['María Fernanda', 'López', 16]);
+});
+
+test('a self-introduction updates the conversation contact before an inquiry exists', async () => {
+  const updates: Array<Record<string, unknown>> = [];
+  const orchestrator = Object.create(ConciergeOrchestratorService.prototype) as {
+    toolExecutor: { execute: (name: string) => Promise<Record<string, unknown>> };
+    upsertInquiryContact: (input: Record<string, unknown>) => Promise<void>;
+    hydrateInquiryFromLatestMessage: (context: ConciergeTurnContext) => Promise<ConciergeTurnContext>;
+  };
+  orchestrator.toolExecutor = {
+    execute: async (name) => {
+      assert.equal(name, 'extract_inquiry_fields');
+      return { firstName: 'Alex', lastName: 'Meine' };
+    },
+  };
+  orchestrator.upsertInquiryContact = async (input) => { updates.push(input); };
+  const context = {
+    conversation: { id: 'conversation-1', contact: { id: 'contact-1' }, messages: [] },
+    activeInquiry: null,
+    latestMessage: { id: 'message-1', direction: 'INBOUND', text: 'Me llamo Alex Meine', createdAt: new Date() },
+  } as unknown as ConciergeTurnContext;
+
+  const result = await orchestrator.hydrateInquiryFromLatestMessage(context);
+  assert.equal(result.activeInquiry, null);
+  assert.deepEqual(updates, [{
+    inquiryId: null,
+    conversationId: 'conversation-1',
+    contactId: 'contact-1',
+    contactUpdate: { firstName: 'Alex', lastName: 'Meine' },
+  }]);
 });
 
 test('a turn can query destinations and then a brochure before answering', async () => {
