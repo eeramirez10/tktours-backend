@@ -23,6 +23,7 @@ import { LocalResourceStorageService } from '../storage/local-resource-storage.s
 
 const listSelect = {
   id: true,
+  seasonKeys: true,
   type: true,
   title: true,
   description: true,
@@ -130,7 +131,6 @@ type ResolvedRelations = {
   programId: string | null;
   programSlug: string | null;
   programName: string | null;
-  programSeasonKeys: string[];
   locationId: string | null;
   locationIds: string[];
 };
@@ -214,6 +214,7 @@ function mapListResource(resource: ResourceListRecord): ResourceListItem {
 
   return {
     id: resource.id,
+    seasonKeys: resource.seasonKeys,
     type: resource.type,
     title: resource.title,
     description: resource.description,
@@ -297,9 +298,10 @@ export class ResourceRepository implements ResourceReadRepository {
       await this.validateResourceRelations({
         relations,
         resourceId: null,
+        seasonKeys: input.seasonKeys ?? [],
         type: input.type,
         active: input.active,
-      }, tx);
+      });
 
       const created = await tx.resource.create({
         data: {
@@ -311,6 +313,7 @@ export class ResourceRepository implements ResourceReadRepository {
             create: relations.locationIds.map((locationId) => ({ locationId })),
           },
           type: input.type,
+          seasonKeys: input.seasonKeys ?? [],
           title: input.title,
           description: input.description,
           month: input.month,
@@ -357,6 +360,7 @@ export class ResourceRepository implements ResourceReadRepository {
         select: {
           id: true,
           type: true,
+          seasonKeys: true,
           active: true,
           country: { select: { code: true } },
           family: { select: { key: true } },
@@ -399,9 +403,10 @@ export class ResourceRepository implements ResourceReadRepository {
       await this.validateResourceRelations({
         relations,
         resourceId: input.resourceId,
+        seasonKeys: input.seasonKeys ?? current.seasonKeys,
         type: nextType,
         active: nextActive,
-      }, tx);
+      });
 
       const resource = await tx.resource.update({
         where: { id: input.resourceId },
@@ -410,6 +415,7 @@ export class ResourceRepository implements ResourceReadRepository {
           familyId: relations.familyId,
           programId: relations.programId,
           locationId: relations.locationId,
+          ...(input.seasonKeys !== undefined ? { seasonKeys: input.seasonKeys } : {}),
           ...(input.type !== undefined ? { type: input.type } : {}),
           ...(input.title !== undefined ? { title: input.title } : {}),
           ...(input.description !== undefined ? { description: input.description } : {}),
@@ -457,6 +463,7 @@ export class ResourceRepository implements ResourceReadRepository {
           select: {
             id: true,
             type: true,
+            seasonKeys: true,
             country: { select: { code: true } },
             family: { select: { key: true } },
             program: { select: { slug: true } },
@@ -480,6 +487,7 @@ export class ResourceRepository implements ResourceReadRepository {
         await this.validateResourceRelations({
           relations,
           resourceId: input.resourceId,
+          seasonKeys: current.seasonKeys,
           type: current.type,
           active: true,
         });
@@ -649,6 +657,7 @@ export class ResourceRepository implements ResourceReadRepository {
         id: true,
         title: true,
         type: true,
+        seasonKeys: true,
         active: true,
         country: { select: { code: true, name: true } },
         family: { select: { key: true } },
@@ -657,10 +666,6 @@ export class ResourceRepository implements ResourceReadRepository {
             id: true,
             slug: true,
             name: true,
-            startWindows: {
-              where: { active: true },
-              select: { seasonKey: true },
-            },
           },
         },
         versions: {
@@ -680,7 +685,6 @@ export class ResourceRepository implements ResourceReadRepository {
     });
 
     const issues: ResourceAuditIssue[] = [];
-    const groupedCampBrochures = new Map<string, string[]>();
 
     for (const resource of resources) {
       const currentVersion = resource.versions[0] ?? null;
@@ -724,12 +728,12 @@ export class ResourceRepository implements ResourceReadRepository {
         continue;
       }
 
-      const seasonKeys = this.extractSeasonKeys(resource.program.startWindows.map((window) => window.seasonKey));
+      const seasonKeys = this.extractSeasonKeys(resource.seasonKeys);
       if (seasonKeys.length === 0) {
         issues.push({
           code: 'CAMP_BROCHURE_MISSING_SEASON',
           severity: 'error',
-          message: 'El brochure de campamento activo no tiene temporada válida asociada en su programa.',
+          message: 'El folleto de campamento activo no tiene temporada propia. Edítalo en Recursos para seleccionarla.',
           resourceId: resource.id,
           resourceTitle: resource.title,
           countryCode: resource.country.code,
@@ -737,26 +741,6 @@ export class ResourceRepository implements ResourceReadRepository {
         });
         continue;
       }
-
-      for (const seasonKey of seasonKeys) {
-        const groupKey = `${resource.country.code}:${seasonKey}`;
-        const list = groupedCampBrochures.get(groupKey) ?? [];
-        list.push(resource.id);
-        groupedCampBrochures.set(groupKey, list);
-      }
-    }
-
-    for (const [groupKey, resourceIds] of groupedCampBrochures.entries()) {
-      if (resourceIds.length <= 1) continue;
-      const [countryCode, seasonKey] = groupKey.split(':');
-      issues.push({
-        code: 'CAMP_BROCHURE_DUPLICATE_SEASON',
-        severity: 'warning',
-        message: 'Hay más de un brochure de campamento activo para la misma temporada y país.',
-        countryCode,
-        seasonKey,
-        relatedResourceIds: resourceIds,
-      });
     }
 
     return {
@@ -874,10 +858,6 @@ export class ResourceRepository implements ResourceReadRepository {
             locationId: true,
             slug: true,
             name: true,
-            startWindows: {
-              where: { active: true },
-              select: { seasonKey: true },
-            },
           },
         })
       : null;
@@ -914,7 +894,6 @@ export class ResourceRepository implements ResourceReadRepository {
       programId: program?.id ?? null,
       programSlug: program?.slug ?? null,
       programName: program?.name ?? null,
-      programSeasonKeys: this.extractSeasonKeys((program?.startWindows ?? []).map((window) => window.seasonKey)),
       locationId: locationIds[0] ?? null,
       locationIds,
     };
@@ -938,47 +917,14 @@ export class ResourceRepository implements ResourceReadRepository {
   private async validateResourceRelations(input: {
     relations: ResolvedRelations;
     resourceId: string | null;
+    seasonKeys: string[];
     type?: string;
     active: boolean;
-  }, db: Prisma.TransactionClient = prisma): Promise<void> {
-    if (input.relations.familyKey !== 'CAMP' || input.type !== 'BROCHURE' || !input.active) {
-      return;
-    }
-
-    if (!input.relations.programId) {
-      throw new ValidationAppError('Camp brochures must be linked to a program');
-    }
-
-    if (input.relations.programSeasonKeys.length === 0) {
-      throw new ValidationAppError('El programa de campamentos no tiene temporada. Ve a Catálogo > Programas, edítalo y selecciona verano, Semana Santa o invierno antes de guardar el folleto.');
-    }
-
-    const duplicateResource = await db.resource.findFirst({
-      where: {
-        ...(input.resourceId ? { id: { not: input.resourceId } } : {}),
-        active: true,
-        type: 'BROCHURE',
-        countryId: input.relations.countryId,
-        family: { key: 'CAMP' },
-        program: {
-          startWindows: {
-            some: {
-              active: true,
-              seasonKey: { in: input.relations.programSeasonKeys as never[] },
-            },
-          },
-        },
-      },
-      select: {
-        id: true,
-      },
-    });
-
-    if (duplicateResource) {
-      const seasons = input.relations.programSeasonKeys.map((seasonKey) => this.toSeasonLabel(seasonKey)).join(', ');
-      throw new ConflictAppError(
-        `There is already an active camp brochure for ${input.relations.countryName} in ${seasons || 'that season'}`,
-      );
+  }): Promise<void> {
+    if (input.relations.familyKey !== 'CAMP' || input.type !== 'BROCHURE' || !input.active) return;
+    if (!input.relations.programId) throw new ValidationAppError('Los folletos de campamentos deben estar ligados a un programa.');
+    if (!input.seasonKeys.length || input.seasonKeys.some((key) => !['SUMMER', 'EASTER', 'WINTER'].includes(key))) {
+      throw new ValidationAppError('Selecciona al menos una temporada del folleto: verano, Semana Santa o invierno.');
     }
   }
 
@@ -1025,19 +971,6 @@ export class ResourceRepository implements ResourceReadRepository {
 
   private extractSeasonKeys(values: string[]): string[] {
     return Array.from(new Set(values.filter((value) => value === 'SUMMER' || value === 'EASTER' || value === 'WINTER')));
-  }
-
-  private toSeasonLabel(seasonKey: string): string {
-    switch (seasonKey) {
-      case 'SUMMER':
-        return 'verano';
-      case 'EASTER':
-        return 'Semana Santa';
-      case 'WINTER':
-        return 'invierno';
-      default:
-        return seasonKey;
-    }
   }
 
   private slugify(value: string): string {

@@ -81,16 +81,16 @@ test('camp season removal is rejected and metadata-only updates leave windows in
   assert.equal(updated, true);
 });
 
-test('camp brochures validate successfully with configured seasons and retain duplicate checks', async () => {
+test('camp brochures use their own seasons and no longer reject other offers in the same country', async () => {
   const repository = new ResourceRepository() as unknown as {
-    validateResourceRelations: (input: unknown, db: unknown) => Promise<void>;
+    validateResourceRelations: (input: unknown) => Promise<void>;
   };
   const input = {
-    relations: { familyKey: 'CAMP', programId: program.id, programSeasonKeys: ['SUMMER'], countryId: program.country.id, countryName: 'Canadá' },
-    resourceId: null, type: 'BROCHURE', active: true,
+    relations: { familyKey: 'CAMP', programId: program.id, countryId: program.country.id, countryName: 'Canadá' },
+    resourceId: null, type: 'BROCHURE', active: true, seasonKeys: ['SUMMER'],
   };
-  const db = { resource: { findFirst: async () => null } };
-  await repository.validateResourceRelations(input, db);
-  await assert.rejects(repository.validateResourceRelations({ ...input, relations: { ...input.relations, programSeasonKeys: [] } }, db), /Catálogo > Programas/);
-  await assert.rejects(repository.validateResourceRelations(input, { resource: { findFirst: async () => ({ id: 'existing' }) } }), /already an active camp brochure/);
+  await repository.validateResourceRelations(input);
+  await repository.validateResourceRelations({ ...input, resourceId: 'another-offer' });
+  await assert.rejects(repository.validateResourceRelations({ ...input, seasonKeys: [] }), /temporada del folleto/);
+  await assert.rejects(repository.validateResourceRelations({ ...input, seasonKeys: ['YEAR_ROUND'] }), /temporada del folleto/);
 });

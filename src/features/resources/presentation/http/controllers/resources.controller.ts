@@ -163,6 +163,7 @@ export class ResourcesController {
         countryCode: body.countryCode,
         countryName: body.countryName,
         familyKey: body.familyKey,
+        seasonKeys: body.seasonKeys,
         programSlug: body.programSlug,
         locationSlug: body.locationSlug,
         locationSlugs: body.locationSlugs,

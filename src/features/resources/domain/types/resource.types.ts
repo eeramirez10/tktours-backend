@@ -1,4 +1,5 @@
 export type ResourceFamilyKey = string;
+export type ResourceSeasonKey = 'SUMMER' | 'EASTER' | 'WINTER';
 
 export type ResourceTypeKey = 'QUOTE' | 'INFO' | 'BROCHURE' | 'MANUAL' | 'PRESENTATION';
 export type WritableResourceTypeKey = 'BROCHURE' | 'MANUAL';
@@ -28,6 +29,7 @@ export type ResourceBaseInput = {
   countryCode: string;
   countryName?: string;
   familyKey?: ResourceFamilyKey;
+  seasonKeys?: ResourceSeasonKey[];
   programSlug?: string;
   locationSlug?: string;
   locationSlugs?: string[];
@@ -63,6 +65,7 @@ export type UpdateResourceInput = {
   countryCode?: string;
   countryName?: string;
   familyKey?: ResourceFamilyKey;
+  seasonKeys?: ResourceSeasonKey[];
   programSlug?: string | null;
   locationSlug?: string | null;
   locationSlugs?: string[];
@@ -174,6 +177,7 @@ export type ResourceVersionItem = ResourceCurrentVersion & {
 
 export type ResourceListItem = {
   id: string;
+  seasonKeys: string[];
   type: ResourceTypeKey;
   title: string;
   description: string | null;
@@ -221,7 +225,6 @@ export type ResourceAuditIssue = {
   code:
     | 'CAMP_BROCHURE_MISSING_PROGRAM'
     | 'CAMP_BROCHURE_MISSING_SEASON'
-    | 'CAMP_BROCHURE_DUPLICATE_SEASON'
     | 'RESOURCE_MISSING_CURRENT_VERSION'
     | 'RESOURCE_PENDING_EXTRACTION';
   severity: ResourceAuditIssueSeverity;

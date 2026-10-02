@@ -148,7 +148,7 @@ class FakeToolExecutor {
             locationName: 'Vancouver',
             programSlug: 'canada-summer-camp',
             programName: 'Canada Summer Camp',
-            programSeasonKeys: ['SUMMER'],
+            seasonKeys: ['SUMMER'],
             currentVersion: {
               id: '22222222-2222-4222-8222-222222222222',
               fileName: 'canada-summer.pdf',
@@ -167,7 +167,7 @@ class FakeToolExecutor {
             locationName: 'Montreal',
             programSlug: 'canada-winter-camp',
             programName: 'Canada Winter Camp',
-            programSeasonKeys: ['WINTER'],
+            seasonKeys: ['WINTER'],
             currentVersion: {
               id: '44444444-4444-4444-8444-444444444444',
               fileName: 'canada-winter.pdf',

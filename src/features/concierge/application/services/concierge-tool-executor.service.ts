@@ -539,6 +539,7 @@ export class ConciergeToolExecutorService {
             type: resource.type,
             familyKey: resource.familyKey,
             programName: resource.programName,
+            seasonKeys: resource.seasonKeys,
             cities: resource.locationNames,
             description: resource.description,
             summary: resource.currentVersion?.summary?.slice(0, args.countryCode ? 700 : 180) ?? null,
@@ -678,6 +679,7 @@ export class ConciergeToolExecutorService {
         title: true,
         type: true,
         description: true,
+        seasonKeys: true,
         month: true,
         year: true,
         validFrom: true,
@@ -702,10 +704,6 @@ export class ConciergeToolExecutorService {
             minAge: true,
             maxAge: true,
             rule: { select: { minWeeks: true, maxWeeks: true, weekOptions: true } },
-            startWindows: {
-              where: { active: true },
-              select: { seasonKey: true },
-            },
           },
         },
         versions: {
@@ -740,6 +738,7 @@ export class ConciergeToolExecutorService {
     const deliverableResources = (
       await Promise.all(
         resources.map(async (resource) => {
+          if (resource.family?.key === 'CAMP' && resource.type === 'BROCHURE' && !(resource.seasonKeys ?? []).some((key) => ['SUMMER', 'EASTER', 'WINTER'].includes(key))) return null;
           const version = resource.versions[0];
           if (!version) return null;
 
@@ -765,6 +764,7 @@ export class ConciergeToolExecutorService {
         title: resource.title,
         type: resource.type,
         description: resource.description,
+        seasonKeys: resource.seasonKeys,
         month: resource.month,
         year: resource.year,
         validFrom: resource.validFrom?.toISOString().slice(0, 10) ?? null,
@@ -790,9 +790,6 @@ export class ConciergeToolExecutorService {
           ?? (resource.program?.rule?.weekOptions.length ? Math.min(...resource.program.rule.weekOptions) : null),
         maxWeeks: resource.program?.rule?.maxWeeks
           ?? (resource.program?.rule?.weekOptions.length ? Math.max(...resource.program.rule.weekOptions) : null),
-        programSeasonKeys: Array.from(
-          new Set((resource.program?.startWindows ?? []).map((window) => window.seasonKey).filter(Boolean)),
-        ),
         currentVersion: resource.versions[0]
           ? {
               id: resource.versions[0].id,

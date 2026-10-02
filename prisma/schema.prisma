@@ -302,6 +302,7 @@ model Resource {
   description     String?
   month           Int?
   year            Int?
+  seasonKeys      SeasonKey[]            @default([])
   validFrom       DateTime?              @db.Date
   validUntil      DateTime?              @db.Date
   minAge          Int?

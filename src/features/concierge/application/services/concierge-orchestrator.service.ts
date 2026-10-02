@@ -1251,6 +1251,7 @@ export class ConciergeOrchestratorService {
     }
 
     const locationSlug = inquiry.location?.slug ?? undefined;
+    const programSlug = inquiry.program?.slug ?? undefined;
     const studentAge = typeof inquiry.studentAge === 'number' && Number.isFinite(inquiry.studentAge)
       ? inquiry.studentAge
       : undefined;
@@ -1259,6 +1260,7 @@ export class ConciergeOrchestratorService {
       ? await this.queryCampBrochureResources({
           countryCode,
           locationSlug,
+          programSlug,
           studentAge,
           targetDate,
         })
@@ -1268,12 +1270,13 @@ export class ConciergeOrchestratorService {
       .map((resource) => this.toCampBrochureCandidate(resource))
       .filter((candidate): candidate is CampBrochureCandidate => candidate !== null);
     const seasonalLocationCandidates = this.getSeasonalCampBrochureCandidates(locationCandidates);
-    if (seasonalLocationCandidates.length > 0) {
+    if (locationSlug) {
       return seasonalLocationCandidates;
     }
 
     const byCountry = await this.queryCampBrochureResources({
       countryCode,
+      programSlug,
       studentAge,
       targetDate,
     });
@@ -1287,6 +1290,7 @@ export class ConciergeOrchestratorService {
 
   private async queryCampBrochureResources(input: {
     countryCode: string;
+    programSlug?: string;
     locationSlug?: string;
     studentAge?: number;
     targetDate?: string;
@@ -1297,6 +1301,7 @@ export class ConciergeOrchestratorService {
       type: 'BROCHURE',
       countryCode: input.countryCode,
       ...(input.locationSlug ? { locationSlug: input.locationSlug } : {}),
+      ...(input.programSlug ? { programSlug: input.programSlug } : {}),
       ...(input.studentAge != null ? { studentAge: input.studentAge } : {}),
       ...(input.targetDate ? { targetDate: input.targetDate } : {}),
     });
@@ -1310,18 +1315,14 @@ export class ConciergeOrchestratorService {
   }
 
   private getSeasonalCampBrochureCandidates(candidates: CampBrochureCandidate[]): CampBrochureCandidate[] {
-    const bySeason = new Map<string, CampBrochureCandidate>();
-
+    const byVersion = new Map<string, CampBrochureCandidate>();
     for (const candidate of candidates) {
-      const seasonKey = this.getPrimarySeasonKey(candidate.seasonKeys);
-      if (!seasonKey) continue;
-      if (!bySeason.has(seasonKey)) {
-        bySeason.set(seasonKey, candidate);
-      }
+      if (!this.getPrimarySeasonKey(candidate.seasonKeys)) continue;
+      byVersion.set(candidate.versionId, candidate);
     }
 
     const order = ['SUMMER', 'EASTER', 'WINTER'];
-    return [...bySeason.values()].sort((left, right) => {
+    return [...byVersion.values()].sort((left, right) => {
       const leftSeason = this.getPrimarySeasonKey(left.seasonKeys) ?? '';
       const rightSeason = this.getPrimarySeasonKey(right.seasonKeys) ?? '';
       const leftOrder = order.indexOf(leftSeason);
@@ -1361,8 +1362,8 @@ export class ConciergeOrchestratorService {
       programName: this.asNonEmptyStringValue(resource.programName),
       locationSlug: this.asNonEmptyStringValue(resource.locationSlug),
       locationName: this.asNonEmptyStringValue(resource.locationName),
-      seasonKeys: Array.isArray(resource.programSeasonKeys)
-        ? resource.programSeasonKeys.filter((item): item is string => typeof item === 'string' && item.trim().length > 0)
+      seasonKeys: Array.isArray(resource.seasonKeys)
+        ? resource.seasonKeys.filter((item): item is string => typeof item === 'string' && item.trim().length > 0)
         : [],
       versionId,
       fileName,
@@ -1448,8 +1449,9 @@ export class ConciergeOrchestratorService {
     left: CampBrochureCandidate[],
     right: CampBrochureCandidate[],
   ): boolean {
-    const leftKeys = left.map((candidate) => candidate.versionId).sort();
-    const rightKeys = right.map((candidate) => candidate.versionId).sort();
+    const identity = (candidate: CampBrochureCandidate) => JSON.stringify([candidate.versionId, [...candidate.seasonKeys].sort()]);
+    const leftKeys = left.map(identity).sort();
+    const rightKeys = right.map(identity).sort();
     return leftKeys.length === rightKeys.length && leftKeys.every((value, index) => value === rightKeys[index]);
   }
 
@@ -1462,7 +1464,7 @@ export class ConciergeOrchestratorService {
     return Array.from(
       new Set(
         candidates
-          .map((candidate) => this.getPrimarySeasonKey(candidate.seasonKeys))
+          .flatMap((candidate) => candidate.seasonKeys.filter((key) => ['SUMMER', 'EASTER', 'WINTER'].includes(key)))
           .filter((seasonKey): seasonKey is string => Boolean(seasonKey))
           .map((seasonKey) => this.toSeasonLabel(seasonKey)),
       ),
@@ -1519,7 +1521,8 @@ export class ConciergeOrchestratorService {
       'Clasifica la respuesta del usuario sobre un ofrecimiento de folleto PDF.',
       'Devuelve JSON estricto con la forma {"action":"SEND|DECLINE|CLARIFY|UNKNOWN","confidence":number,"selectedSeasonKeys":string[],"sendAll":boolean}.',
       'selectedSeasonKeys solo puede contener SUMMER, EASTER y/o WINTER.',
-      'Estado OFFERED: SEND si el usuario confirma que sí quiere que le envíen el folleto y ya dejó clara la temporada o solo existe una opción.',
+      'Estado OFFERED: SEND si el usuario confirma que sí quiere que le envíen el folleto y ya dejó clara la temporada o solo hay una temporada disponible.',
+      'Puede haber varios folletos de una misma temporada. Si el usuario confirma esa temporada, comparte todos los folletos compatibles, sin pedirle que elija un único archivo.',
       'Estado OFFERED con varias temporadas: CLARIFY si el usuario responde que sí, pero no especifica cuál quiere.',
       'Estado OFFERED con varias temporadas: SEND si el usuario elige una o varias temporadas específicas, o si pide todas.',
       'Estado SENT: SEND si el usuario pide que lo reenvíen, dice que no le llegó, que no ve el archivo, que lo comparta otra vez o insiste en recibir el PDF.',
@@ -1580,7 +1583,7 @@ export class ConciergeOrchestratorService {
     candidates: CampBrochureCandidate[],
     replyAction: { selectedSeasonKeys: string[]; sendAll: boolean },
   ): CampBrochureCandidate[] {
-    if (replyAction.sendAll || candidates.length <= 1) {
+    if (replyAction.sendAll || (replyAction.selectedSeasonKeys.length === 0 && this.getCampBrochureSeasonLabels(candidates).length <= 1)) {
       return candidates;
     }
 
@@ -1590,8 +1593,7 @@ export class ConciergeOrchestratorService {
 
     const selectedSet = new Set(replyAction.selectedSeasonKeys);
     return candidates.filter((candidate) => {
-      const primarySeason = this.getPrimarySeasonKey(candidate.seasonKeys);
-      return primarySeason ? selectedSet.has(primarySeason) : false;
+      return candidate.seasonKeys.some((key) => selectedSet.has(key));
     });
   }
 
@@ -1641,7 +1643,7 @@ export class ConciergeOrchestratorService {
       seasonLabels.length > 1
         ? `Tengo folletos disponibles para ${countryName} en estas temporadas: ${seasonLabels.join(', ')}${priceText ? `, con opciones ${priceText}` : ''} 😊. ¿Cuál te gustaría que te comparta?`
         : seasonLabels.length > 0
-        ? `Tengo un folleto disponible para ${countryName} en ${seasonLabels.join(', ')}${priceText ? `, ${priceText}` : ''} 😊. ¿Quieres que te lo comparta ahora?`
+        ? `Tengo ${params.candidates.length > 1 ? 'folletos disponibles' : 'un folleto disponible'} para ${countryName} en ${seasonLabels.join(', ')}${priceText ? `, ${priceText}` : ''} 😊. ¿Quieres que te ${params.candidates.length > 1 ? 'los' : 'lo'} comparta ahora?`
         : `Tengo folletos disponibles para ${countryName}${priceText ? `, ${priceText}` : ''} 😊. ¿Quieres que te los comparta ahora?`;
     if (!priceText) return fallback;
 
@@ -1667,7 +1669,7 @@ export class ConciergeOrchestratorService {
           availableSeasons: seasonLabels,
           brochures: params.candidates.map((candidate) => ({
             title: candidate.resourceTitle,
-            season: this.getPrimarySeasonKey(candidate.seasonKeys),
+            seasonKeys: candidate.seasonKeys,
             locationName: candidate.locationName,
             priceFrom: candidate.priceFrom != null && candidate.priceCurrency ? candidate.priceFrom : null,
             priceCurrency: candidate.priceFrom != null && candidate.priceCurrency ? candidate.priceCurrency : null,
@@ -1742,7 +1744,7 @@ export class ConciergeOrchestratorService {
           brochures: params.candidates.map((candidate) => ({
             fileName: candidate.fileName,
             brochureTitle: candidate.resourceTitle,
-            season: this.getPrimarySeasonKey(candidate.seasonKeys),
+            seasonKeys: candidate.seasonKeys,
             locationName: candidate.locationName,
           })),
         }),

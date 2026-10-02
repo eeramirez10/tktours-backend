@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { optionalResourceSeasonsSchema } from './resource-season.schemas.js';
 
 import {
   optionalNullableCurrencySchema,
@@ -97,6 +98,7 @@ export const uploadResourceBodySchema = z
     countryCode: z.string().trim().min(2).max(3),
     countryName: optionalTrimmedStringSchema,
     familyKey: optionalTrimmedStringSchema,
+    seasonKeys: optionalResourceSeasonsSchema,
     programSlug: optionalTrimmedStringSchema,
     locationSlug: optionalTrimmedStringSchema,
     locationSlugs: optionalLocationSlugsSchema,
@@ -136,6 +138,7 @@ export const uploadResourceBodySchema = z
     countryCode: value.countryCode.trim().toUpperCase(),
     countryName: value.countryName,
     familyKey: value.familyKey,
+    seasonKeys: value.seasonKeys,
     programSlug: value.programSlug,
     locationSlug: value.locationSlug,
     locationSlugs: value.locationSlugs,

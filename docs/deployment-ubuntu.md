@@ -45,6 +45,25 @@ docker compose --profile migrate run --rm migrate
 
 No ejecuta `migrate dev` ni hace reset de la base de datos. Ejecútalo antes de cada despliegue que incluya migraciones.
 
+### Temporadas propias de los folletos
+
+La migración `20261002160000_add_resource_seasons` agrega `Resource.seasonKeys` sin borrar registros ni archivos.
+Si un programa de campamentos tenía una sola temporada, se conserva para sus folletos existentes.
+Si tenía varias, los folletos quedan pendientes de clasificación: en Recursos > Editar selecciona
+las temporadas cubiertas por cada PDF (verano, Semana Santa o invierno).
+El concierge no ofrece folletos de campamentos sin temporada propia.
+
+Puede haber varios folletos activos del mismo país y temporada; no se consideran duplicados
+por ese motivo. El concierge considera los compatibles con el programa, ciudad, edad y fecha,
+y comparte los de la temporada que confirme el cliente sin repetir un archivo multitemporada.
+
+Antes de iniciar la nueva versión en producción, construye la imagen de migraciones y aplícala:
+
+```bash
+sudo docker compose build migrate
+sudo docker compose --profile migrate run --rm migrate
+```
+
 ### Recuperar una migración parcial
 
 Si la base ya tenía cambios de catálogo o ubicaciones y falló `20260820120000_sync_production_schema`, primero actualiza el código que incluye la migración de reconciliación. Después marca esa migración fallida como aplicada y ejecuta el despliegue normal:
