@@ -53,6 +53,15 @@ Si tenía varias, los folletos quedan pendientes de clasificación: en Recursos 
 las temporadas cubiertas por cada PDF (verano, Semana Santa o invierno).
 El concierge no ofrece folletos de campamentos sin temporada propia.
 
+Las temporadas ya no se capturan al crear o editar programas. El catálogo muestra badges
+calculados desde sus folletos PDF vigentes con versión actual; sin folletos vigentes no anuncia
+temporadas. Crear un programa de campamentos no requiere tener un PDF previamente.
+La IA sugiere únicamente las temporadas explícitas del documento y el usuario confirma o
+ajusta la selección al guardar el recurso. Si no detecta ninguna, se seleccionan manualmente.
+Las ventanas históricas de programas se conservan en la base, pero no definen la oferta de
+campamentos ni sustituyen las fechas y temporadas propias de los folletos. Esta simplificación
+no requiere una nueva migración, reset ni eliminación de datos o archivos.
+
 Puede haber varios folletos activos del mismo país y temporada; no se consideran duplicados
 por ese motivo. El concierge considera los compatibles con el programa, ciudad, edad y fecha,
 y comparte los de la temporada que confirme el cliente sin repetir un archivo multitemporada.

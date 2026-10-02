@@ -1,7 +1,9 @@
 import { Prisma } from '@prisma/client';
 
-import { ConflictAppError, NotFoundAppError, ValidationAppError } from '../../../../shared/domain/errors/app-error.js';
+import { ConflictAppError, NotFoundAppError } from '../../../../shared/domain/errors/app-error.js';
 import { prisma } from '../../../../shared/infrastructure/database/prisma.js';
+import { resourceBusinessDate, resourceValidityStatus } from '../../../resources/domain/resource-validity.js';
+import type { CatalogCampSeasonKey } from '../../domain/types/catalog.types.js';
 import type { CatalogReadRepository } from '../../domain/repositories/catalog-read.repository.js';
 import type {
   CatalogCollectionQuery,
@@ -126,6 +128,13 @@ const programSelect = {
       active: true,
       month: true,
       year: true,
+      seasonKeys: true,
+      shareFrom: true,
+      shareUntil: true,
+      validFrom: true,
+      validUntil: true,
+      family: { select: { key: true, active: true } },
+      country: { select: { active: true } },
       versions: {
         where: { isCurrent: true },
         take: 1,
@@ -133,6 +142,7 @@ const programSelect = {
         select: {
           fileName: true,
           fileUrl: true,
+          mimeType: true,
         },
       },
     },
@@ -142,7 +152,14 @@ const programSelect = {
 type ProgramRecord = Prisma.ProgramGetPayload<{ select: typeof programSelect }>;
 
 function mapResources(resources: ProgramRecord['resources']): CatalogResourceSummary[] {
-  return resources.map((resource) => ({
+  const today = resourceBusinessDate();
+  return resources.filter((resource) => resource.country.active && resource.family?.active !== false
+    && resourceValidityStatus(resource, today) === 'CURRENT'
+    && (resource.family?.key !== 'CAMP' || resource.type !== 'BROCHURE'
+      || resource.seasonKeys.some((key) => key === 'SUMMER' || key === 'EASTER' || key === 'WINTER'))
+    && Boolean(resource.versions[0]?.fileUrl)
+    && (resource.versions[0]?.mimeType === 'application/pdf'
+      || (!resource.versions[0]?.mimeType && /\.pdf$/i.test(resource.versions[0]?.fileName ?? '')))).map((resource) => ({
     id: resource.id,
     title: resource.title,
     type: resource.type,
@@ -151,10 +168,19 @@ function mapResources(resources: ProgramRecord['resources']): CatalogResourceSum
     fileUrl: resource.versions[0]?.fileUrl ?? null,
     month: resource.month,
     year: resource.year,
+    seasonKeys: resource.family?.key === 'CAMP' && resource.type === 'BROCHURE'
+      ? resource.seasonKeys.filter((key): key is CatalogCampSeasonKey => key === 'SUMMER' || key === 'EASTER' || key === 'WINTER')
+      : [],
+    validFrom: resource.validFrom?.toISOString().slice(0, 10) ?? null,
+    validUntil: resource.validUntil?.toISOString().slice(0, 10) ?? null,
   }));
 }
 
 function mapProgram(program: ProgramRecord): CatalogProgramDetail {
+  const resources = mapResources(program.resources);
+  const isCamp = program.family.key === 'CAMP';
+  const availableSeasons = new Set(resources.flatMap((resource) => resource.seasonKeys));
+  const seasonOrder: CatalogCampSeasonKey[] = ['SUMMER', 'EASTER', 'WINTER'];
   return {
     id: program.id,
     slug: program.slug,
@@ -188,7 +214,10 @@ function mapProgram(program: ProgramRecord): CatalogProgramDetail {
       maxAge: accommodation.maxAge,
       notes: accommodation.notes,
     })),
-    startWindows: program.startWindows.map((startWindow) => ({
+    seasonKeys: isCamp && program.active && program.country.active && program.family.active
+      ? seasonOrder.filter((season) => availableSeasons.has(season)) : [],
+    // Historical camp windows remain stored, but availability belongs to each PDF.
+    startWindows: isCamp ? [] : program.startWindows.map((startWindow) => ({
       seasonKey: startWindow.seasonKey,
       startMonth: startWindow.startMonth,
       endMonth: startWindow.endMonth,
@@ -197,7 +226,7 @@ function mapProgram(program: ProgramRecord): CatalogProgramDetail {
       startsEveryMonday: startWindow.startsEveryMonday,
       notes: startWindow.notes,
     })),
-    resources: mapResources(program.resources),
+    resources,
   };
 }
 
@@ -508,14 +537,6 @@ export class CatalogRepository implements CatalogReadRepository {
       throw new NotFoundAppError(`Family not found for key ${input.familyKey}`);
     }
 
-    const seasonKeys = [...new Set(input.seasonKeys ?? [])];
-    if (input.familyKey === 'CAMP' && seasonKeys.length === 0) {
-      throw new ValidationAppError('Selecciona al menos una temporada para el programa de campamentos.');
-    }
-    if (input.familyKey !== 'CAMP' && seasonKeys.length > 0) {
-      throw new ValidationAppError('Las temporadas de campamentos solo se pueden configurar en la familia Campamentos / viajes.');
-    }
-
     try {
       const program = await this.database.program.create({
         data: {
@@ -526,9 +547,6 @@ export class CatalogRepository implements CatalogReadRepository {
           description: input.description?.trim() || null,
           minAge: input.minAge ?? null,
           maxAge: input.maxAge ?? null,
-          ...(seasonKeys.length > 0 ? {
-            startWindows: { create: seasonKeys.map((seasonKey) => ({ seasonKey, active: true })) },
-          } : {}),
           active: input.active,
         },
         select: programSelect,
@@ -547,7 +565,7 @@ export class CatalogRepository implements CatalogReadRepository {
     return this.database.$transaction(async (tx) => {
       const current = await tx.program.findUnique({
         where: { id: input.programId },
-        select: { minAge: true, maxAge: true, family: { select: { key: true } }, startWindows: { select: { seasonKey: true } } },
+        select: { minAge: true, maxAge: true },
       });
 
       if (!current) {
@@ -560,14 +578,6 @@ export class CatalogRepository implements CatalogReadRepository {
         throw new ConflictAppError('Maximum age must be greater than or equal to minimum age');
       }
 
-      const seasonKeys = input.seasonKeys === undefined ? undefined : [...new Set(input.seasonKeys)];
-      if (seasonKeys !== undefined && (current.family.key !== 'CAMP' || seasonKeys.length === 0)) {
-        throw new ValidationAppError(current.family.key === 'CAMP'
-          ? 'Selecciona al menos una temporada para el programa de campamentos.'
-          : 'Las temporadas de campamentos solo se pueden configurar en la familia Campamentos / viajes.');
-      }
-      const existingSeasons = new Set(current.startWindows.map((window) => window.seasonKey));
-
       const program = await tx.program.update({
         where: { id: input.programId },
         data: {
@@ -576,16 +586,6 @@ export class CatalogRepository implements CatalogReadRepository {
           ...(input.minAge !== undefined ? { minAge: input.minAge } : {}),
           ...(input.maxAge !== undefined ? { maxAge: input.maxAge } : {}),
           ...(input.active !== undefined ? { active: input.active } : {}),
-          ...(seasonKeys !== undefined ? {
-            startWindows: {
-              // Retain configured dates when a season is removed and later selected again.
-              updateMany: [
-                { where: { seasonKey: { in: ['SUMMER', 'EASTER', 'WINTER'], notIn: seasonKeys } }, data: { active: false } },
-                { where: { seasonKey: { in: seasonKeys } }, data: { active: true } },
-              ],
-              create: seasonKeys.filter((season) => !existingSeasons.has(season)).map((seasonKey) => ({ seasonKey, active: true })),
-            },
-          } : {}),
         },
         select: programSelect,
       });
@@ -659,6 +659,7 @@ export class CatalogRepository implements CatalogReadRepository {
     query: CatalogProgramRecommendationQuery,
   ): CatalogProgramRecommendation | null {
     const reasons: string[] = [];
+    if (program.family.key === 'CAMP' && program.seasonKeys.length === 0) return null;
 
     if (query.studentAge != null) {
       if (program.minAge != null && query.studentAge < program.minAge) {
@@ -698,21 +699,30 @@ export class CatalogRepository implements CatalogReadRepository {
 
     if (query.preferredStartMonth != null) {
       const preferredStartMonth = query.preferredStartMonth;
-      const hasMonthMatch = program.startWindows.some((window) => {
-        if (window.startsEveryMonday) {
-          return true;
-        }
-        if (window.startMonth == null && window.endMonth == null) {
-          return true;
-        }
-        if (window.startMonth != null && window.endMonth != null) {
-          if (window.startMonth <= window.endMonth) {
-            return preferredStartMonth >= window.startMonth && preferredStartMonth <= window.endMonth;
+      const hasMonthMatch = program.family.key === 'CAMP'
+        ? program.resources.some((resource) => {
+          if (resource.type !== 'BROCHURE' || resource.seasonKeys.length === 0) return false;
+          const year = resource.year ?? resourceBusinessDate().getUTCFullYear();
+          const monthStart = new Date(Date.UTC(year, preferredStartMonth - 1, 1)).toISOString().slice(0, 10);
+          const monthEnd = new Date(Date.UTC(year, preferredStartMonth, 0)).toISOString().slice(0, 10);
+          return (!resource.validFrom || resource.validFrom <= monthEnd)
+            && (!resource.validUntil || resource.validUntil >= monthStart);
+        })
+        : program.startWindows.some((window) => {
+          if (window.startsEveryMonday) {
+            return true;
           }
-          return preferredStartMonth >= window.startMonth || preferredStartMonth <= window.endMonth;
-        }
-        return preferredStartMonth === window.startMonth || preferredStartMonth === window.endMonth;
-      });
+          if (window.startMonth == null && window.endMonth == null) {
+            return true;
+          }
+          if (window.startMonth != null && window.endMonth != null) {
+            if (window.startMonth <= window.endMonth) {
+              return preferredStartMonth >= window.startMonth && preferredStartMonth <= window.endMonth;
+            }
+            return preferredStartMonth >= window.startMonth || preferredStartMonth <= window.endMonth;
+          }
+          return preferredStartMonth === window.startMonth || preferredStartMonth === window.endMonth;
+        });
 
       if (!hasMonthMatch) {
         return null;

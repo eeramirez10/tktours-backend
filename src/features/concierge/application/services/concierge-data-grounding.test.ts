@@ -19,6 +19,7 @@ test('destination overview filters by family and includes resource summaries', a
         countryCode: string;
         cities: string[];
         brochureCount: number;
+        programs: Array<{ seasonKeys: string[] }>;
         resources: Array<{ summary: string | null; priceFrom: number | null }>;
       }>;
     }>;
@@ -31,6 +32,7 @@ test('destination overview filters by family and includes resource summaries', a
         slug: 'swiss-camp', name: 'Camp Suiza', description: 'Campamento de verano',
         country, family: { key: 'CAMP' }, location: null,
         minAge: 7, maxAge: 17, minWeeks: 1, maxWeeks: 4,
+        seasonKeys: ['SUMMER', 'WINTER'],
       }];
     },
   };
@@ -39,6 +41,7 @@ test('destination overview filters by family and includes resource summaries', a
     return { resources: [{
       id: 'resource-1', title: 'Folleto Suiza', type: 'BROCHURE',
       countryCode: 'CH', familyKey: 'CAMP', programName: 'Camp Suiza',
+      programSlug: 'swiss-camp', seasonKeys: ['SUMMER'],
       locationNames: ['Zúrich'], locationName: 'Zúrich',
       description: 'Campamento en Zúrich', currentVersion: { summary: 'Actividades y alojamiento' },
       minAge: 7, maxAge: 17, minWeeks: 1, maxWeeks: 4,
@@ -52,6 +55,7 @@ test('destination overview filters by family and includes resource summaries', a
   assert.equal(result.destinations[0]?.countryCode, 'CH');
   assert.deepEqual(result.destinations[0]?.cities, ['Zúrich']);
   assert.equal(result.destinations[0]?.brochureCount, 1);
+  assert.deepEqual(result.destinations[0]?.programs[0]?.seasonKeys, ['SUMMER']);
   assert.equal(result.destinations[0]?.resources[0]?.summary, 'Actividades y alojamiento');
   assert.equal(result.destinations[0]?.resources[0]?.priceFrom, 1200);
   assert.equal(filters.every((args) => (args as { familyKey?: string }).familyKey === 'CAMP'), true);
@@ -81,6 +85,19 @@ test('resource age filters use the resource bound before the program bound', () 
       ],
     },
   ]);
+});
+
+test('program listing exposes the resource-derived seasons without inheriting legacy windows', async () => {
+  const executor = Object.create(ConciergeToolExecutorService.prototype) as {
+    catalogRepository: { findPrograms: () => Promise<Array<Record<string, unknown>>> };
+    listAvailablePrograms: (args: { countryCode: string }) => Promise<{ programs: Array<{ seasonKeys: string[] }> }>;
+  };
+  executor.catalogRepository = { findPrograms: async () => [{
+    slug: 'swiss-camp', name: 'BLI', family: { key: 'CAMP', name: 'Campamentos' },
+    country, location: null, seasonKeys: ['EASTER'], startWindows: [{ seasonKey: 'WINTER' }],
+  }] };
+  const result = await executor.listAvailablePrograms({ countryCode: 'CH' });
+  assert.deepEqual(result.programs[0]?.seasonKeys, ['EASTER']);
 });
 
 test('an unpriced camp brochure is offered without mentioning a price', async () => {

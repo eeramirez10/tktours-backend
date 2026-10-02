@@ -74,3 +74,30 @@ test('city names remove descriptive prefixes and duplicates but preserve officia
   }).analyze(input);
   assert.deepEqual(result.cities, ['Quebec', 'Montreal', 'Ciudad de México', 'Ciudad del Carmen', 'Ciudad Juárez']);
 });
+
+test('analysis suggests only supported PDF seasons and leaves family and program manual', async () => {
+  const service = new ResourceDocumentAnalysisService(
+    { createTextResponse: async (request) => {
+      assert.match(request.instructions ?? '', /No deduzcas la temporada por el país, los meses/);
+      assert.match(request.instructions ?? '', /No clasifiques ni devuelvas la familia o el programa/);
+      const schema = request.text?.format as { schema: { required: string[]; properties: { seasonKeys: { items: { enum: string[] } } } } };
+      assert.ok(schema.schema.required.includes('seasonKeys'));
+      assert.deepEqual(schema.schema.properties.seasonKeys.items.enum, ['SUMMER', 'EASTER', 'WINTER']);
+      return { id: 'test', outputText: JSON.stringify({ ...analysis, seasonKeys: ['SUMMER', 'WINTER', 'SUMMER'], familyKey: 'CAMP', programName: 'BLI' }), raw: {} as never };
+    } },
+    { listCountries: async () => countries },
+  );
+  const result = await service.analyze(input);
+  assert.deepEqual(result.seasonKeys, ['SUMMER', 'WINTER']);
+  assert.equal(Object.hasOwn(result, 'familyKey'), false);
+  assert.equal(Object.hasOwn(result, 'programName'), false);
+  const manual = await service.analyze({ ...input, resourceType: 'MANUAL' });
+  assert.deepEqual(manual.seasonKeys, []);
+});
+
+test('missing or ambiguous seasons are not inferred from dates or the country', async () => {
+  const result = await createService({ ...analysis, validFrom: '2027-06-01', validUntil: '2027-08-30' }).analyze(input);
+  assert.deepEqual(result.seasonKeys, []);
+  const unknown = createService({ ...analysis, seasonKeys: ['CUSTOM'] });
+  await assert.rejects(unknown.analyze(input), /invalid shape/);
+});

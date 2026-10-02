@@ -11,6 +11,7 @@ const analysisSchema = z.object({
   countryCode: z.string().trim().length(2).nullable(),
   countryName: z.string().trim().max(120).nullable(),
   cities: z.array(z.string().trim().min(1).max(150)).max(50),
+  seasonKeys: z.array(z.enum(['SUMMER', 'EASTER', 'WINTER'])).max(3).default([]),
   year: z.number().int().min(2000).max(2100).nullable().default(null),
   shareFrom: z.iso.date().nullable().default(null),
   shareUntil: z.iso.date().nullable().default(null),
@@ -38,6 +39,7 @@ const analysisJsonSchema = {
     countryCode: { type: ['string', 'null'] },
     countryName: { type: ['string', 'null'] },
     cities: { type: 'array', items: { type: 'string' } },
+    seasonKeys: { type: 'array', items: { type: 'string', enum: ['SUMMER', 'EASTER', 'WINTER'] }, maxItems: 3 },
     year: { type: ['integer', 'null'] },
     shareFrom: { type: ['string', 'null'] },
     shareUntil: { type: ['string', 'null'] },
@@ -54,7 +56,7 @@ const analysisJsonSchema = {
     confidence: { type: 'number' },
   },
   required: [
-    'suggestedTitle', 'summary', 'countryCode', 'countryName', 'cities',
+    'suggestedTitle', 'summary', 'countryCode', 'countryName', 'cities', 'seasonKeys',
     'year', 'shareFrom', 'shareUntil', 'validFrom', 'validUntil', 'minAge', 'maxAge', 'minWeeks', 'maxWeeks', 'priceFrom', 'priceCurrency',
     'priceUnit', 'priceNotes', 'confidence',
   ],
@@ -76,6 +78,7 @@ export class ResourceDocumentAnalysisService {
       instructions: [
         'Analiza el PDF de TKTours y devuelve exclusivamente los datos que estén explícitamente respaldados por el documento.',
         'No inventes fechas, edades, destinos ni precios. Usa null o una lista vacía cuando un dato no sea claro.',
+        'seasonKeys contiene exclusivamente las temporadas explícitas cubiertas por este folleto: SUMMER para verano/summer, EASTER para Semana Santa/easter y WINTER para invierno/winter. Puede cubrir una o varias. No deduzcas la temporada por el país, los meses, el nombre del programa ni la fecha actual. Si el documento no la indica claramente o es MANUAL, devuelve []. El usuario revisará y confirmará la selección antes de guardar.',
         'countryCode debe ser ISO 3166-1 alpha-2 en mayúsculas.',
         'cities contiene únicamente los nombres de las ciudades del destino, sin duplicados, escuelas, instalaciones ni prefijos descriptivos. Por ejemplo, devuelve "Quebec", no "Ciudad de Quebec". Conserva nombres oficiales como "Ciudad de México" o "Ciudad del Carmen".',
         'year es la edición del viaje explícita en el documento, no el año actual. Si hay varios años o no es claro, devuelve null.',
@@ -135,6 +138,7 @@ export class ResourceDocumentAnalysisService {
       ? normalized
       : {
           ...normalized,
+          seasonKeys: [],
           priceFrom: null,
           priceCurrency: null,
           priceUnit: null,
@@ -169,6 +173,7 @@ export class ResourceDocumentAnalysisService {
 
     return {
       ...value,
+      seasonKeys: [...new Set(value.seasonKeys)],
       countryCode: value.countryCode?.toUpperCase() ?? null,
       priceCurrency: value.priceCurrency?.toUpperCase() ?? null,
       cities: [...new Map(value.cities.map(cleanDetectedCityName).filter(Boolean)

@@ -127,7 +127,6 @@ export type CreateCatalogProgramInput = {
   description?: string | null;
   minAge?: number | null;
   maxAge?: number | null;
-  seasonKeys?: CatalogCampSeasonKey[];
   active: boolean;
 };
 
@@ -137,7 +136,6 @@ export type UpdateCatalogProgramInput = {
   description?: string | null;
   minAge?: number | null;
   maxAge?: number | null;
-  seasonKeys?: CatalogCampSeasonKey[];
   active?: boolean;
 };
 
@@ -188,6 +186,7 @@ export type CatalogProgram = {
   ruleNotes: string | null;
   prices: CatalogProgramPrice[];
   accommodations: CatalogProgramAccommodation[];
+  seasonKeys: CatalogCampSeasonKey[];
   startWindows: CatalogProgramStartWindow[];
 };
 
@@ -200,6 +199,9 @@ export type CatalogResourceSummary = {
   fileUrl: string | null;
   month: number | null;
   year: number | null;
+  seasonKeys: CatalogCampSeasonKey[];
+  validFrom: string | null;
+  validUntil: string | null;
 };
 
 export type CatalogProgramDetail = CatalogProgram & {

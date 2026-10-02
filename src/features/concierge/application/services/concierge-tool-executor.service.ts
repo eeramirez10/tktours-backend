@@ -531,6 +531,8 @@ export class ConciergeToolExecutorService {
             maxAge: program.maxAge,
             minWeeks: program.minWeeks,
             maxWeeks: program.maxWeeks,
+            seasonKeys: [...new Set(countryResources.filter((resource) => resource.programSlug === program.slug)
+              .flatMap((resource) => resource.seasonKeys))],
           })),
           resources: countryResources.slice(0, limit).map((resource) => ({
             id: resource.id,
@@ -586,6 +588,7 @@ export class ConciergeToolExecutorService {
         minWeeks: program.minWeeks,
         maxWeeks: program.maxWeeks,
         prices: program.family.key === 'CAMP' ? [] : program.prices,
+        seasonKeys: program.seasonKeys,
       })),
     };
   }
