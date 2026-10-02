@@ -1,6 +1,8 @@
 import { z } from 'zod';
 
 import { ValidationAppError } from '../../../../shared/domain/errors/app-error.js';
+import { logger } from '../../../../shared/config/logger.js';
+import { GeoReferenceService } from '../../../catalog/application/services/geo-reference.service.js';
 import { OpenAiResponsesClient } from '../../../concierge/infrastructure/clients/openai-response.js';
 
 const analysisSchema = z.object({
@@ -53,7 +55,10 @@ const analysisJsonSchema = {
 } as const;
 
 export class ResourceDocumentAnalysisService {
-  constructor(private readonly responsesClient = new OpenAiResponsesClient({ timeoutMs: 120_000 })) {}
+  constructor(
+    private readonly responsesClient: Pick<OpenAiResponsesClient, 'createTextResponse'> = new OpenAiResponsesClient({ timeoutMs: 120_000 }),
+    private readonly geoReference: Pick<GeoReferenceService, 'listCountries'> = new GeoReferenceService(),
+  ) {}
 
   async analyze(input: {
     fileName: string;
@@ -66,7 +71,7 @@ export class ResourceDocumentAnalysisService {
         'Analiza el PDF de TKTours y devuelve exclusivamente los datos que estén explícitamente respaldados por el documento.',
         'No inventes fechas, edades, destinos ni precios. Usa null o una lista vacía cuando un dato no sea claro.',
         'countryCode debe ser ISO 3166-1 alpha-2 en mayúsculas.',
-        'cities contiene ciudades o sedes del país del programa, sin duplicados.',
+        'cities contiene únicamente los nombres de las ciudades del destino, sin duplicados, escuelas, instalaciones ni prefijos descriptivos. Por ejemplo, devuelve "Quebec", no "Ciudad de Quebec". Conserva nombres oficiales como "Ciudad de México" o "Ciudad del Carmen".',
         'validFrom y validUntil usan YYYY-MM-DD y representan la vigencia real del folleto o sus fechas operativas globales.',
         'minAge y maxAge representan el rango global aceptado por el recurso.',
         'minWeeks y maxWeeks representan el rango global de duración explícito en semanas. Para "2 a 8 semanas" devuelve 2 y 8; para una duración única devuelve el mismo valor en ambos campos. No conviertas días o meses si la equivalencia no es explícita.',
@@ -117,7 +122,7 @@ export class ResourceDocumentAnalysisService {
       throw new ValidationAppError('OpenAI resource analysis has an invalid shape', result.error.flatten());
     }
 
-    const normalized = this.normalize(result.data);
+    const normalized = await this.resolveCountry(this.normalize(result.data));
     return input.resourceType === 'BROCHURE'
       ? normalized
       : {
@@ -127,6 +132,23 @@ export class ResourceDocumentAnalysisService {
           priceUnit: null,
           priceNotes: null,
         };
+  }
+
+  private async resolveCountry(value: ResourceDocumentAnalysis): Promise<ResourceDocumentAnalysis> {
+    if (!value.countryCode && !value.countryName) return value;
+    try {
+      const countries = await this.geoReference.listCountries();
+      const name = normalizeDestinationName(value.countryName ?? '');
+      const match = (name ? countries.find((country) =>
+        [country.name, country.providerName, country.code, country.iso3]
+          .some((label) => normalizeDestinationName(label) === name),
+      ) : undefined) ?? countries.find((country) => country.code === value.countryCode);
+      if (match) return { ...value, countryCode: match.code, countryName: match.name };
+    } catch (error) {
+      logger.warn({ err: error }, 'No se pudo contrastar el país del PDF con el catálogo geográfico');
+    }
+    // Preserve the detected name for manual entry, without presenting an unverified ISO code.
+    return value.countryName ? { ...value, countryCode: null } : { ...value, countryCode: null, countryName: null };
   }
 
   private normalize(value: ResourceDocumentAnalysis): ResourceDocumentAnalysis {
@@ -141,7 +163,8 @@ export class ResourceDocumentAnalysisService {
       ...value,
       countryCode: value.countryCode?.toUpperCase() ?? null,
       priceCurrency: value.priceCurrency?.toUpperCase() ?? null,
-      cities: Array.from(new Set(value.cities.map((city) => city.trim()).filter(Boolean))),
+      cities: [...new Map(value.cities.map(cleanDetectedCityName).filter(Boolean)
+        .map((city) => [normalizeDestinationName(city), city] as const)).values()],
       minWeeks: minWeeks != null && maxWeeks != null ? Math.min(minWeeks, maxWeeks) : minWeeks,
       maxWeeks: minWeeks != null && maxWeeks != null ? Math.max(minWeeks, maxWeeks) : maxWeeks,
       minAge: minAge != null && maxAge != null ? Math.min(minAge, maxAge) : minAge,
@@ -150,4 +173,15 @@ export class ResourceDocumentAnalysisService {
       validUntil: validFrom && validUntil && validFrom > validUntil ? validFrom : validUntil,
     };
   }
+}
+
+function normalizeDestinationName(value: string): string {
+  return value.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/\s+/g, ' ').trim();
+}
+
+function cleanDetectedCityName(value: string): string {
+  const name = value.trim().replace(/\s+/g, ' ');
+  if (normalizeDestinationName(name) === 'ciudad de mexico') return name;
+  if (/^qu[eé]bec\s+city$/iu.test(name)) return name.replace(/\s+city$/iu, '');
+  return name.replace(/^(?:la\s+)?ciudad\s+de\s+|^(?:the\s+)?city\s+of\s+/iu, '').trim();
 }
