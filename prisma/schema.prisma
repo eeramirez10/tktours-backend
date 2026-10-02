@@ -303,6 +303,8 @@ model Resource {
   month           Int?
   year            Int?
   seasonKeys      SeasonKey[]            @default([])
+  shareFrom       DateTime?              @db.Date
+  shareUntil      DateTime?              @db.Date
   validFrom       DateTime?              @db.Date
   validUntil      DateTime?              @db.Date
   minAge          Int?
@@ -333,6 +335,7 @@ model Resource {
   @@index([locationId])
   @@index([month, year])
   @@index([validFrom, validUntil])
+  @@index([shareFrom, shareUntil])
   @@index([minAge, maxAge])
 }
 

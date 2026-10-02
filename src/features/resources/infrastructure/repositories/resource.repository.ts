@@ -1,3 +1,4 @@
+import { resourceValidityStatus } from '../../domain/resource-validity.js';
 import { Prisma, QuoteMode, ResourceSourceType } from '@prisma/client';
 import { randomUUID } from 'node:crypto';
 
@@ -29,6 +30,8 @@ const listSelect = {
   description: true,
   month: true,
   year: true,
+  shareFrom: true,
+  shareUntil: true,
   validFrom: true,
   validUntil: true,
   minAge: true,
@@ -220,6 +223,9 @@ function mapListResource(resource: ResourceListRecord): ResourceListItem {
     description: resource.description,
     month: resource.month,
     year: resource.year,
+    shareFrom: resource.shareFrom,
+    shareUntil: resource.shareUntil,
+    validityStatus: resourceValidityStatus(resource),
     validFrom: resource.validFrom,
     validUntil: resource.validUntil,
     minAge: resource.minAge,
@@ -318,6 +324,8 @@ export class ResourceRepository implements ResourceReadRepository {
           description: input.description,
           month: input.month,
           year: input.year,
+          shareFrom: input.shareFrom,
+          shareUntil: input.shareUntil,
           validFrom: input.validFrom,
           validUntil: input.validUntil,
           minAge: input.minAge,
@@ -362,6 +370,7 @@ export class ResourceRepository implements ResourceReadRepository {
           type: true,
           seasonKeys: true,
           active: true,
+          shareFrom: true, shareUntil: true, validFrom: true, validUntil: true,
           country: { select: { code: true } },
           family: { select: { key: true } },
           program: { select: { slug: true } },
@@ -408,6 +417,14 @@ export class ResourceRepository implements ResourceReadRepository {
         active: nextActive,
       });
 
+      const mergedDates = { ...current, ...Object.fromEntries(Object.entries(input).filter(([, value]) => value !== undefined)) };
+      if (mergedDates.shareFrom && mergedDates.shareUntil && mergedDates.shareFrom > mergedDates.shareUntil) {
+        throw new ValidationAppError('La vigencia para compartir debe terminar después de su inicio.');
+      }
+      if (mergedDates.validFrom && mergedDates.validUntil && mergedDates.validFrom > mergedDates.validUntil) {
+        throw new ValidationAppError('Las fechas del viaje deben terminar después de su inicio.');
+      }
+
       const resource = await tx.resource.update({
         where: { id: input.resourceId },
         data: {
@@ -421,6 +438,8 @@ export class ResourceRepository implements ResourceReadRepository {
           ...(input.description !== undefined ? { description: input.description } : {}),
           ...(input.month !== undefined ? { month: input.month } : {}),
           ...(input.year !== undefined ? { year: input.year } : {}),
+          ...(input.shareFrom !== undefined ? { shareFrom: input.shareFrom } : {}),
+          ...(input.shareUntil !== undefined ? { shareUntil: input.shareUntil } : {}),
           ...(input.validFrom !== undefined ? { validFrom: input.validFrom } : {}),
           ...(input.validUntil !== undefined ? { validUntil: input.validUntil } : {}),
           ...(input.minAge !== undefined ? { minAge: input.minAge } : {}),

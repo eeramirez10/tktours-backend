@@ -73,7 +73,8 @@ test('a selected program and city filter the brochure query without falling back
 test('resource tools expose PDF seasons and exclude unclassified camp brochures', async (context) => {
   const resource = {
     id: 'test', title: 'PDF de verano', type: 'BROCHURE', description: null,
-    seasonKeys: ['SUMMER'], validFrom: null, validUntil: null,
+    seasonKeys: ['SUMMER'], validFrom: null, validUntil: null, active: true,
+    year: 2099, shareFrom: new Date('2000-01-01'), shareUntil: new Date('2099-12-31'),
     country: { code: 'CA', name: 'Canadá' }, family: { key: 'CAMP', name: 'Campamentos' },
     location: null, locationAssignments: [], program: null,
     versions: [{ id: 'v1', fileName: 'camp.pdf', sourceType: 'EXTERNAL_LINK', fileUrl: 'https://example.com/camp.pdf' }],

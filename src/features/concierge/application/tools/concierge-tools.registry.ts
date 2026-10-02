@@ -138,7 +138,7 @@ export const conciergeTools = [
     type: 'function',
     name: 'list_available_resources',
     description:
-      'List active PDF brochures or manuals compatible with country, city/location, program, student age and target date.',
+      'List only currently authorized, non-expired PDF brochures or manuals compatible with destination, age and requested month/year. Camp brochures missing edition or sharing validity are excluded. Future trip editions may be shared once their commercial sharing validity begins.',
     parameters: {
       type: 'object',
       additionalProperties: false,
@@ -155,7 +155,7 @@ export const conciergeTools = [
           enum: ['BROCHURE', 'MANUAL'],
         },
         studentAge: { type: 'number' },
-        targetDate: { type: 'string', description: 'ISO date YYYY-MM-DD for the intended program start.' },
+        targetDate: { type: 'string', description: 'Requested travel month/year as YYYY-MM-01. Matches any travel dates overlapping that month. Commercial sharing validity is always evaluated against today, independently.' },
         activeOnly: { type: 'boolean' },
       },
       required: [],

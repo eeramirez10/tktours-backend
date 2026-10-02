@@ -179,6 +179,8 @@ export class ResourcesController {
         active: body.active,
         minWeeks: body.minWeeks,
         maxWeeks: body.maxWeeks,
+        shareFrom: body.shareFrom,
+        shareUntil: body.shareUntil,
         validFrom: body.validFrom,
         validUntil: body.validUntil,
         minAge: body.minAge,

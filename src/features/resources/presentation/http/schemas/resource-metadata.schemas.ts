@@ -39,6 +39,8 @@ export function validateResourceMetadata(
   value: {
     familyKey?: string | null;
     type?: string;
+    shareFrom?: Date | null;
+    shareUntil?: Date | null;
     validFrom?: Date | null;
     validUntil?: Date | null;
     minAge?: number | null;
@@ -50,6 +52,10 @@ export function validateResourceMetadata(
   },
   ctx: z.RefinementCtx,
 ): void {
+  if (value.shareFrom && value.shareUntil && value.shareFrom > value.shareUntil) {
+    ctx.addIssue({ code: 'custom', path: ['shareUntil'], message: 'La vigencia para compartir debe terminar después de su inicio.' });
+  }
+
   if (value.validFrom && value.validUntil && value.validFrom > value.validUntil) {
     ctx.addIssue({ code: 'custom', path: ['validUntil'], message: 'validUntil must be on or after validFrom' });
   }

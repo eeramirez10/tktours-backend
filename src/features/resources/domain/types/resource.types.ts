@@ -45,6 +45,8 @@ export type ResourceBaseInput = {
   active: boolean;
   minWeeks?: number | null;
   maxWeeks?: number | null;
+  shareFrom?: Date | null;
+  shareUntil?: Date | null;
   validFrom?: Date | null;
   validUntil?: Date | null;
   minAge?: number | null;
@@ -78,6 +80,8 @@ export type UpdateResourceInput = {
   active?: boolean;
   minWeeks?: number | null;
   maxWeeks?: number | null;
+  shareFrom?: Date | null;
+  shareUntil?: Date | null;
   validFrom?: Date | null;
   validUntil?: Date | null;
   minAge?: number | null;
@@ -183,6 +187,9 @@ export type ResourceListItem = {
   description: string | null;
   month: number | null;
   year: number | null;
+  shareFrom: Date | null;
+  shareUntil: Date | null;
+  validityStatus: import("../resource-validity.js").ResourceValidityStatus;
   validFrom: Date | null;
   validUntil: Date | null;
   minAge: number | null;

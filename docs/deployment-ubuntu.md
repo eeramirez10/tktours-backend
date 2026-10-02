@@ -91,12 +91,38 @@ Ejecutarlo de nuevo para el mismo correo actualiza nombre, rol y contraseña.
 
 ## Actualizaciones
 
+### Vigencia y edición de los folletos
+
+La migración `20261002180000_add_resource_sharing_validity` agrega `shareFrom` y
+`shareUntil` sin borrar recursos ni archivos ni inventar vigencias para los PDFs existentes.
+
+- `year`: edición/año del viaje, no la fecha de subida del archivo.
+- `shareFrom` / `shareUntil`: periodo autorizado para ofrecer y compartir el PDF/precios.
+- `validFrom` / `validUntil`: periodo del viaje. El mes solicitado se compara por solapamiento.
+- Los campamentos sin edición o sin ambas fechas de envío quedan pendientes de configurar.
+- Las tools y el envío de WhatsApp excluyen documentos vencidos, inactivos y ediciones anteriores.
+- Un folleto del próximo verano puede compartirse ahora si su vigencia comercial ya comenzó.
+- Los manuales realmente atemporales pueden dejar el año y las fechas vacíos.
+
+Después del despliegue, editar los campamentos existentes en Recursos para completar su
+año y vigencia de envío. No se requiere un reset de la base de datos ni eliminar el volumen.
+La vigencia se calcula al consultar y antes de enviar usando el día de Ciudad de México;
+no depende de un cron ni de cambiar manualmente el campo `active`.
+
+Construir la imagen de migración actualizada antes de ejecutarla:
+
+```bash
+sudo docker compose build migrate tktours-concierge-backend
+sudo docker compose --profile migrate run --rm migrate
+sudo docker compose up -d --force-recreate tktours-concierge-backend
+```
+
 Después de que los cambios estén fusionados y enviados a `main`:
 
 ```bash
 git pull --ff-only origin main
+docker compose build --pull migrate tktours-concierge-backend
 docker compose --profile migrate run --rm migrate
-docker compose build --pull tktours-concierge-backend
 docker compose up -d --force-recreate tktours-concierge-backend
 docker compose logs --tail=100 tktours-concierge-backend
 ```

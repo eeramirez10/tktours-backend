@@ -1,3 +1,4 @@
+import { resourceEligibilityFilters, resourceValidityStatus } from '../../../resources/domain/resource-validity.js';
 import { access } from 'node:fs/promises';
 import { Prisma } from '@prisma/client';
 
@@ -497,9 +498,7 @@ export class ConciergeToolExecutorService {
       }),
     ]);
 
-    const today = new Date().toISOString().slice(0, 10);
-    const resources = resourceResult.resources.filter((resource) =>
-      args.targetDate || !resource.validUntil || resource.validUntil >= today);
+    const resources = resourceResult.resources;
     const limit = args.countryCode ? 20 : 3;
     const destinations = countries
       .filter((country) => !args.countryCode || country.code === args.countryCode)
@@ -547,6 +546,9 @@ export class ConciergeToolExecutorService {
             maxAge: resource.maxAge,
             minWeeks: resource.minWeeks,
             maxWeeks: resource.maxWeeks,
+            year: resource.year,
+            shareFrom: resource.shareFrom,
+            shareUntil: resource.shareUntil,
             validFrom: resource.validFrom,
             validUntil: resource.validUntil,
             priceFrom: resource.priceFrom,
@@ -637,18 +639,12 @@ export class ConciergeToolExecutorService {
       ? Math.floor(args.studentAge)
       : null;
     const targetDate = this.parseResourceTargetDate(args.targetDate);
-    const compatibilityFilters: Prisma.ResourceWhereInput[] = [];
+    const compatibilityFilters: Prisma.ResourceWhereInput[] = resourceEligibilityFilters(targetDate);
 
     if (studentAge != null) {
       compatibilityFilters.push(...this.resourceAgeCompatibilityFilters(studentAge));
     }
 
-    if (targetDate) {
-      compatibilityFilters.push(
-        { OR: [{ validFrom: null }, { validFrom: { lte: targetDate } }] },
-        { OR: [{ validUntil: null }, { validUntil: { gte: targetDate } }] },
-      );
-    }
 
     const resources = await prisma.resource.findMany({
       where: {
@@ -682,6 +678,9 @@ export class ConciergeToolExecutorService {
         seasonKeys: true,
         month: true,
         year: true,
+        active: true,
+        shareFrom: true,
+        shareUntil: true,
         validFrom: true,
         validUntil: true,
         minAge: true,
@@ -738,6 +737,7 @@ export class ConciergeToolExecutorService {
     const deliverableResources = (
       await Promise.all(
         resources.map(async (resource) => {
+          if (resourceValidityStatus(resource) !== 'CURRENT') return null;
           if (resource.family?.key === 'CAMP' && resource.type === 'BROCHURE' && !(resource.seasonKeys ?? []).some((key) => ['SUMMER', 'EASTER', 'WINTER'].includes(key))) return null;
           const version = resource.versions[0];
           if (!version) return null;
@@ -767,6 +767,8 @@ export class ConciergeToolExecutorService {
         seasonKeys: resource.seasonKeys,
         month: resource.month,
         year: resource.year,
+        shareFrom: resource.shareFrom?.toISOString().slice(0, 10) ?? null,
+        shareUntil: resource.shareUntil?.toISOString().slice(0, 10) ?? null,
         validFrom: resource.validFrom?.toISOString().slice(0, 10) ?? null,
         validUntil: resource.validUntil?.toISOString().slice(0, 10) ?? null,
         minAge: resource.minAge ?? resource.program?.minAge ?? null,
@@ -861,16 +863,10 @@ export class ConciergeToolExecutorService {
     const targetDate = inquiry.preferredStartMonth && inquiry.preferredStartYear
       ? new Date(Date.UTC(inquiry.preferredStartYear, inquiry.preferredStartMonth - 1, 1))
       : null;
-    const resourceFilters: Prisma.ResourceWhereInput[] = [];
+    const resourceFilters: Prisma.ResourceWhereInput[] = resourceEligibilityFilters(targetDate);
 
     if (inquiry.studentAge != null) {
       resourceFilters.push(...this.resourceAgeCompatibilityFilters(inquiry.studentAge));
-    }
-    if (targetDate) {
-      resourceFilters.push(
-        { OR: [{ validFrom: null }, { validFrom: { lte: targetDate } }] },
-        { OR: [{ validUntil: null }, { validUntil: { gte: targetDate } }] },
-      );
     }
 
     const sentResourceIds = inquiry.resourceSends.map((send) => send.resourceId);

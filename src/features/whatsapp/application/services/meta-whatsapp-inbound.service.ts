@@ -1,3 +1,4 @@
+import { ResourceDeliveryGuardService } from '../../../resources/application/services/resource-delivery-guard.service.js';
 import { Prisma } from '@prisma/client';
 import { z } from 'zod';
 
@@ -188,13 +189,23 @@ export class MetaWhatsAppInboundService {
       ...(outboundMessage ? { messageId: outboundMessage.id } : {}),
     });
 
-    const replyText = turn.modelResponse.structured.replyText.trim();
+    let replyText = turn.modelResponse.structured.replyText.trim();
     if (!replyText) {
       return;
     }
 
+    const requestedMediaUrls = this.getOutboundMediaUrls(outboundMessage);
+    const mediaUrls = await new ResourceDeliveryGuardService().filterMediaUrls(requestedMediaUrls, turn.context.activeInquiry?.id ?? null);
+    if (mediaUrls.length !== requestedMediaUrls.length) {
+      replyText = mediaUrls.length
+        ? 'Te comparto los folletos vigentes. Un asesor de TKTours puede ayudarte con las otras opciones.'
+        : 'Ese folleto ya no está disponible para compartir. Con gusto, un asesor de TKTours te ayudará con información actualizada.';
+      if (outboundMessage) await prisma.message.update({
+        where: { id: outboundMessage.id },
+        data: { text: replyText, mediaUrl: mediaUrls[0] ?? null },
+      });
+    }
     const textResult = await this.whatsAppClient.sendMessage({ to: waId, body: replyText });
-    const mediaUrls = this.getOutboundMediaUrls(outboundMessage);
     const mediaResults = await Promise.all(
       mediaUrls.map(async (mediaUrl) => {
         try {

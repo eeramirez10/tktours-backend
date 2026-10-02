@@ -58,6 +58,8 @@ export const updateResourceBodySchema = z
     active: z.boolean().optional(),
     minWeeks: optionalNullableIntSchema(1, 104),
     maxWeeks: optionalNullableIntSchema(1, 104),
+    shareFrom: optionalNullableDateSchema,
+    shareUntil: optionalNullableDateSchema,
     validFrom: optionalNullableDateSchema,
     validUntil: optionalNullableDateSchema,
     minAge: optionalNullableIntSchema(0, 120),
