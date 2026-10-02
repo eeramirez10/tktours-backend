@@ -23,6 +23,10 @@ const nullableTrimmedStringSchema = z.preprocess((value) => {
 }, z.string().nullable().optional());
 
 const nullableIntSchema = z.number().int().min(0).max(120).nullable().optional();
+const campSeasonsSchema = z.array(z.enum(['SUMMER', 'EASTER', 'WINTER']))
+  .max(3)
+  .transform((seasons) => [...new Set(seasons)])
+  .optional();
 
 const catalogKeySchema = z.string().trim().min(2).max(64).regex(
   /^[A-Z0-9]+(?:_[A-Z0-9]+)*$/,
@@ -140,9 +144,13 @@ export const createCatalogProgramBodySchema = z
     description: nullableTrimmedStringSchema,
     minAge: nullableIntSchema,
     maxAge: nullableIntSchema,
+    seasonKeys: campSeasonsSchema,
     active: z.boolean().optional(),
   })
   .superRefine((value, ctx) => {
+    if (value.familyKey === 'CAMP' && !value.seasonKeys?.length) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['seasonKeys'], message: 'Selecciona al menos una temporada para el programa de campamentos.' });
+    }
     if (value.minAge != null && value.maxAge != null && value.minAge > value.maxAge) {
       ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['maxAge'], message: 'maxAge must be greater than or equal to minAge' });
     }
@@ -159,6 +167,7 @@ export const updateCatalogProgramBodySchema = z
     description: nullableTrimmedStringSchema,
     minAge: nullableIntSchema,
     maxAge: nullableIntSchema,
+    seasonKeys: campSeasonsSchema,
     active: z.boolean().optional(),
   })
   .superRefine((value, ctx) => {

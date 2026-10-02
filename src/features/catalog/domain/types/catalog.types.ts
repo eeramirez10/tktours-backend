@@ -11,6 +11,8 @@ export type CatalogSeasonKey =
   | 'SEPTEMBER'
   | 'CUSTOM';
 
+export type CatalogCampSeasonKey = Extract<CatalogSeasonKey, 'SUMMER' | 'EASTER' | 'WINTER'>;
+
 export type CatalogAccommodationKey =
   | 'HOST_FAMILY'
   | 'UNIVERSITY_RESIDENCE'
@@ -125,6 +127,7 @@ export type CreateCatalogProgramInput = {
   description?: string | null;
   minAge?: number | null;
   maxAge?: number | null;
+  seasonKeys?: CatalogCampSeasonKey[];
   active: boolean;
 };
 
@@ -134,6 +137,7 @@ export type UpdateCatalogProgramInput = {
   description?: string | null;
   minAge?: number | null;
   maxAge?: number | null;
+  seasonKeys?: CatalogCampSeasonKey[];
   active?: boolean;
 };
 

@@ -950,7 +950,7 @@ export class ResourceRepository implements ResourceReadRepository {
     }
 
     if (input.relations.programSeasonKeys.length === 0) {
-      throw new ValidationAppError('Camp brochure program must define at least one seasonal start window');
+      throw new ValidationAppError('El programa de campamentos no tiene temporada. Ve a Catálogo > Programas, edítalo y selecciona verano, Semana Santa o invierno antes de guardar el folleto.');
     }
 
     const duplicateResource = await db.resource.findFirst({

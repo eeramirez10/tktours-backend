@@ -1,6 +1,6 @@
 import { Prisma } from '@prisma/client';
 
-import { ConflictAppError, NotFoundAppError } from '../../../../shared/domain/errors/app-error.js';
+import { ConflictAppError, NotFoundAppError, ValidationAppError } from '../../../../shared/domain/errors/app-error.js';
 import { prisma } from '../../../../shared/infrastructure/database/prisma.js';
 import type { CatalogReadRepository } from '../../domain/repositories/catalog-read.repository.js';
 import type {
@@ -207,8 +207,10 @@ function stripResources(program: CatalogProgramDetail): CatalogProgram {
 }
 
 export class CatalogRepository implements CatalogReadRepository {
+  constructor(private readonly database = prisma) {}
+
   findCountries(query: CatalogCollectionQuery): Promise<CatalogCountry[]> {
-    return prisma.country.findMany({
+    return this.database.country.findMany({
       where: query.activeOnly ? { active: true } : undefined,
       orderBy: { name: 'asc' },
       select: { id: true, code: true, name: true, active: true },
@@ -216,7 +218,7 @@ export class CatalogRepository implements CatalogReadRepository {
   }
 
   findFamilies(query: CatalogCollectionQuery): Promise<CatalogFamily[]> {
-    return prisma.productFamily.findMany({
+    return this.database.productFamily.findMany({
       where: query.activeOnly ? { active: true } : undefined,
       orderBy: { name: 'asc' },
       select: { id: true, key: true, name: true, active: true },
@@ -227,7 +229,7 @@ export class CatalogRepository implements CatalogReadRepository {
     const key = input.key?.trim().toUpperCase() || this.toFamilyKey(input.name);
 
     try {
-      return await prisma.productFamily.create({
+      return await this.database.productFamily.create({
         data: {
           key,
           name: input.name.trim(),
@@ -245,7 +247,7 @@ export class CatalogRepository implements CatalogReadRepository {
 
   async updateFamily(input: UpdateCatalogFamilyInput): Promise<CatalogFamily> {
     try {
-      return await prisma.productFamily.update({
+      return await this.database.productFamily.update({
         where: { id: input.familyId },
         data: {
           ...(input.name !== undefined ? { name: input.name.trim() } : {}),
@@ -263,7 +265,7 @@ export class CatalogRepository implements CatalogReadRepository {
 
   async createCountry(input: CreateCatalogCountryInput): Promise<CatalogCountry> {
     try {
-      const created = await prisma.country.create({
+      const created = await this.database.country.create({
         data: {
           code: input.code.trim().toUpperCase(),
           name: input.name.trim(),
@@ -283,7 +285,7 @@ export class CatalogRepository implements CatalogReadRepository {
 
   async updateCountry(input: UpdateCatalogCountryInput): Promise<CatalogCountry> {
     try {
-      const updated = await prisma.country.update({
+      const updated = await this.database.country.update({
         where: { id: input.countryId },
         data: {
           ...(input.code !== undefined ? { code: input.code.trim().toUpperCase() } : {}),
@@ -331,7 +333,7 @@ export class CatalogRepository implements CatalogReadRepository {
       ] });
     }
 
-    return prisma.programLocation.findMany({
+    return this.database.programLocation.findMany({
       where: {
         ...(query.activeOnly ? { active: true } : {}),
         ...(query.countryCode ? { country: { code: query.countryCode } } : {}),
@@ -358,7 +360,7 @@ export class CatalogRepository implements CatalogReadRepository {
   }
 
   async createLocation(input: CreateCatalogLocationInput): Promise<CatalogProgramLocation> {
-    const country = await prisma.country.findUnique({
+    const country = await this.database.country.findUnique({
       where: { code: input.countryCode.trim().toUpperCase() },
       select: { id: true },
     });
@@ -368,7 +370,7 @@ export class CatalogRepository implements CatalogReadRepository {
     }
 
     try {
-      const created = await prisma.programLocation.create({
+      const created = await this.database.programLocation.create({
         data: {
           countryId: country.id,
           name: input.name.trim(),
@@ -400,7 +402,7 @@ export class CatalogRepository implements CatalogReadRepository {
   }
 
   async updateLocation(input: UpdateCatalogLocationInput): Promise<CatalogProgramLocation> {
-    const current = await prisma.programLocation.findUnique({
+    const current = await this.database.programLocation.findUnique({
       where: { id: input.locationId },
       select: {
         id: true,
@@ -421,7 +423,7 @@ export class CatalogRepository implements CatalogReadRepository {
 
     let nextCountryId: string | undefined;
     if (input.countryCode !== undefined) {
-      const country = await prisma.country.findUnique({
+      const country = await this.database.country.findUnique({
         where: { code: input.countryCode.trim().toUpperCase() },
         select: { id: true },
       });
@@ -435,7 +437,7 @@ export class CatalogRepository implements CatalogReadRepository {
 
     const nextName = input.name?.trim() ?? current.name;
     try {
-      const updated = await prisma.programLocation.update({
+      const updated = await this.database.programLocation.update({
         where: { id: input.locationId },
         data: {
           ...(nextCountryId ? { countryId: nextCountryId } : {}),
@@ -470,7 +472,7 @@ export class CatalogRepository implements CatalogReadRepository {
   }
 
   async findPrograms(query: ListCatalogProgramsQuery): Promise<CatalogProgram[]> {
-    const programs: ProgramRecord[] = await prisma.program.findMany({
+    const programs: ProgramRecord[] = await this.database.program.findMany({
       where: {
         ...(query.activeOnly ? { active: true } : {}),
         ...(query.countryCode ? { country: { code: query.countryCode } } : {}),
@@ -495,8 +497,8 @@ export class CatalogRepository implements CatalogReadRepository {
 
   async createProgram(input: CreateCatalogProgramInput): Promise<CatalogProgram> {
     const [country, family] = await Promise.all([
-      prisma.country.findUnique({ where: { code: input.countryCode.trim().toUpperCase() }, select: { id: true } }),
-      prisma.productFamily.findUnique({ where: { key: input.familyKey.trim().toUpperCase() }, select: { id: true } }),
+      this.database.country.findUnique({ where: { code: input.countryCode.trim().toUpperCase() }, select: { id: true } }),
+      this.database.productFamily.findUnique({ where: { key: input.familyKey.trim().toUpperCase() }, select: { id: true } }),
     ]);
 
     if (!country) {
@@ -506,8 +508,16 @@ export class CatalogRepository implements CatalogReadRepository {
       throw new NotFoundAppError(`Family not found for key ${input.familyKey}`);
     }
 
+    const seasonKeys = [...new Set(input.seasonKeys ?? [])];
+    if (input.familyKey === 'CAMP' && seasonKeys.length === 0) {
+      throw new ValidationAppError('Selecciona al menos una temporada para el programa de campamentos.');
+    }
+    if (input.familyKey !== 'CAMP' && seasonKeys.length > 0) {
+      throw new ValidationAppError('Las temporadas de campamentos solo se pueden configurar en la familia Campamentos / viajes.');
+    }
+
     try {
-      const program = await prisma.program.create({
+      const program = await this.database.program.create({
         data: {
           countryId: country.id,
           familyId: family.id,
@@ -516,6 +526,9 @@ export class CatalogRepository implements CatalogReadRepository {
           description: input.description?.trim() || null,
           minAge: input.minAge ?? null,
           maxAge: input.maxAge ?? null,
+          ...(seasonKeys.length > 0 ? {
+            startWindows: { create: seasonKeys.map((seasonKey) => ({ seasonKey, active: true })) },
+          } : {}),
           active: input.active,
         },
         select: programSelect,
@@ -531,38 +544,58 @@ export class CatalogRepository implements CatalogReadRepository {
   }
 
   async updateProgram(input: UpdateCatalogProgramInput): Promise<CatalogProgram> {
-    const current = await prisma.program.findUnique({
-      where: { id: input.programId },
-      select: { minAge: true, maxAge: true },
+    return this.database.$transaction(async (tx) => {
+      const current = await tx.program.findUnique({
+        where: { id: input.programId },
+        select: { minAge: true, maxAge: true, family: { select: { key: true } }, startWindows: { select: { seasonKey: true } } },
+      });
+
+      if (!current) {
+        throw new NotFoundAppError('Program not found');
+      }
+
+      const minAge = input.minAge === undefined ? current.minAge : input.minAge;
+      const maxAge = input.maxAge === undefined ? current.maxAge : input.maxAge;
+      if (minAge != null && maxAge != null && minAge > maxAge) {
+        throw new ConflictAppError('Maximum age must be greater than or equal to minimum age');
+      }
+
+      const seasonKeys = input.seasonKeys === undefined ? undefined : [...new Set(input.seasonKeys)];
+      if (seasonKeys !== undefined && (current.family.key !== 'CAMP' || seasonKeys.length === 0)) {
+        throw new ValidationAppError(current.family.key === 'CAMP'
+          ? 'Selecciona al menos una temporada para el programa de campamentos.'
+          : 'Las temporadas de campamentos solo se pueden configurar en la familia Campamentos / viajes.');
+      }
+      const existingSeasons = new Set(current.startWindows.map((window) => window.seasonKey));
+
+      const program = await tx.program.update({
+        where: { id: input.programId },
+        data: {
+          ...(input.name !== undefined ? { name: input.name.trim() } : {}),
+          ...(input.description !== undefined ? { description: input.description?.trim() || null } : {}),
+          ...(input.minAge !== undefined ? { minAge: input.minAge } : {}),
+          ...(input.maxAge !== undefined ? { maxAge: input.maxAge } : {}),
+          ...(input.active !== undefined ? { active: input.active } : {}),
+          ...(seasonKeys !== undefined ? {
+            startWindows: {
+              // Retain configured dates when a season is removed and later selected again.
+              updateMany: [
+                { where: { seasonKey: { in: ['SUMMER', 'EASTER', 'WINTER'], notIn: seasonKeys } }, data: { active: false } },
+                { where: { seasonKey: { in: seasonKeys } }, data: { active: true } },
+              ],
+              create: seasonKeys.filter((season) => !existingSeasons.has(season)).map((seasonKey) => ({ seasonKey, active: true })),
+            },
+          } : {}),
+        },
+        select: programSelect,
+      });
+
+      return stripResources(mapProgram(program));
     });
-
-    if (!current) {
-      throw new NotFoundAppError('Program not found');
-    }
-
-    const minAge = input.minAge === undefined ? current.minAge : input.minAge;
-    const maxAge = input.maxAge === undefined ? current.maxAge : input.maxAge;
-    if (minAge != null && maxAge != null && minAge > maxAge) {
-      throw new ConflictAppError('Maximum age must be greater than or equal to minimum age');
-    }
-
-    const program = await prisma.program.update({
-      where: { id: input.programId },
-      data: {
-        ...(input.name !== undefined ? { name: input.name.trim() } : {}),
-        ...(input.description !== undefined ? { description: input.description?.trim() || null } : {}),
-        ...(input.minAge !== undefined ? { minAge: input.minAge } : {}),
-        ...(input.maxAge !== undefined ? { maxAge: input.maxAge } : {}),
-        ...(input.active !== undefined ? { active: input.active } : {}),
-      },
-      select: programSelect,
-    });
-
-    return stripResources(mapProgram(program));
   }
 
   async deleteProgram(programId: string): Promise<void> {
-    await prisma.$transaction(async (tx) => {
+    await this.database.$transaction(async (tx) => {
       const program = await tx.program.findUnique({
         where: { id: programId },
         select: {
@@ -587,7 +620,7 @@ export class CatalogRepository implements CatalogReadRepository {
   }
 
   async findProgramBySlug(slug: string): Promise<CatalogProgramDetail | null> {
-    const program = await prisma.program.findFirst({
+    const program = await this.database.program.findFirst({
       where: { slug },
       select: programSelect,
     });
@@ -596,7 +629,7 @@ export class CatalogRepository implements CatalogReadRepository {
   }
 
   async findRecommendedPrograms(query: CatalogProgramRecommendationQuery): Promise<CatalogProgramRecommendation[]> {
-    const programs: ProgramRecord[] = await prisma.program.findMany({
+    const programs: ProgramRecord[] = await this.database.program.findMany({
       where: {
         active: true,
         country: { code: query.countryCode },
