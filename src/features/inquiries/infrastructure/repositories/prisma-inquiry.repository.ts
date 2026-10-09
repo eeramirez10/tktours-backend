@@ -2,6 +2,7 @@ import { Prisma } from '@prisma/client';
 
 import { ConflictAppError, NotFoundAppError } from '../../../../shared/domain/errors/app-error.js';
 import { prisma } from '../../../../shared/infrastructure/database/prisma.js';
+import { resolveConciergeFamily } from '../../../catalog/infrastructure/repositories/resolve-concierge-family.js';
 import type { InquiryRepository } from '../../domain/repositories/inquiry.repository.js';
 import type {
   CreateInquiryInput,
@@ -330,7 +331,7 @@ export class PrismaInquiryRepository implements InquiryRepository {
     }
 
     const family = input.familyKey
-      ? await prisma.productFamily.findUnique({ where: { key: input.familyKey as never }, select: { id: true } })
+      ? await resolveConciergeFamily(input.familyKey)
       : null;
     if (input.familyKey && !family) {
       throw new NotFoundAppError(`Family not found for key ${input.familyKey}`);

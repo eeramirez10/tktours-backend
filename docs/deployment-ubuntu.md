@@ -37,6 +37,16 @@ Los archivos se guardan en el volumen `tktours-concierge-resources`, independien
 
 ## Migraciones Prisma
 
+La migración `20261008180000_reconcile_concierge_family_keys` corrige las claves de familias
+creadas con nombres en español: Cursos de Idiomas usa `LANGUAGE_COURSE`, Campamentos usa
+`CAMP` y Tours / Circuitos por el mundo usa `SCHOOL_PROGRAM`. Conserva sus identificadores
+y las asociaciones con programas, recursos y solicitudes. Si hay familias equivalentes,
+reutiliza una fila y reasigna sus vínculos; las filas históricas restantes se conservan inactivas.
+Las familias personalizadas, como Años escolares, no se reclasifican como circuitos.
+Las nuevas familias del menú reciben estas claves automáticamente desde el catálogo.
+Si falta una familia del menú tras limpiar datos, la solicitud la recupera sin crear programas
+ni folletos ficticios. No se requiere un reset de la base de datos.
+
 El servicio `migrate` ejecuta exclusivamente `prisma migrate deploy`:
 
 ```bash

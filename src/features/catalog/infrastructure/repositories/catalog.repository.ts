@@ -5,6 +5,7 @@ import { prisma } from '../../../../shared/infrastructure/database/prisma.js';
 import { resourceBusinessDate, resourceValidityStatus } from '../../../resources/domain/resource-validity.js';
 import type { CatalogCampSeasonKey } from '../../domain/types/catalog.types.js';
 import type { CatalogReadRepository } from '../../domain/repositories/catalog-read.repository.js';
+import { canonicalConciergeFamily, normalizedFamilyKey } from '../../domain/concierge-families.js';
 import type {
   CatalogCollectionQuery,
   CatalogCountry,
@@ -255,7 +256,9 @@ export class CatalogRepository implements CatalogReadRepository {
   }
 
   async createFamily(input: CreateCatalogFamilyInput): Promise<CatalogFamily> {
-    const key = input.key?.trim().toUpperCase() || this.toFamilyKey(input.name);
+    const key = canonicalConciergeFamily(input.key ?? '')?.key
+      ?? canonicalConciergeFamily(input.name)?.key
+      ?? normalizedFamilyKey(input.key || input.name);
 
     try {
       return await this.database.productFamily.create({
@@ -268,7 +271,7 @@ export class CatalogRepository implements CatalogReadRepository {
       });
     } catch (error) {
       if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
-        throw new ConflictAppError('Family key already exists');
+        throw new ConflictAppError('Ya existe esta familia en el catálogo. Utiliza la familia registrada en lugar de crear otra.');
       }
       throw error;
     }
@@ -752,14 +755,4 @@ export class CatalogRepository implements CatalogReadRepository {
       .replace(/^-+|-+$/g, '');
   }
 
-  private toFamilyKey(value: string): string {
-    return value
-      .trim()
-      .normalize('NFD')
-      .replace(/[\u0300-\u036f]/g, '')
-      .toUpperCase()
-      .replace(/[^A-Z0-9]+/g, '_')
-      .replace(/^_+|_+$/g, '')
-      .slice(0, 64);
-  }
 }
