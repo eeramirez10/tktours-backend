@@ -75,6 +75,9 @@ class FakeResponsesClient {
 
 class FakeToolExecutor {
   async execute(toolName: string, args: unknown) {
+    if (toolName === 'list_available_course_types') {
+      return { courseTypes: [{ familyKey: 'CAMP', name: 'Campamentos / viajes', programCount: 2, brochureCount: 2 }] };
+    }
     if (toolName === 'extract_inquiry_fields') {
       const payload = args as { latestMessage?: string };
       const latestMessage = payload.latestMessage ?? '';

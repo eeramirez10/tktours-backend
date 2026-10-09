@@ -3,6 +3,8 @@ import { access } from 'node:fs/promises';
 import { Prisma } from '@prisma/client';
 
 import { CatalogRepository } from '../../../catalog/infrastructure/repositories/catalog.repository.js';
+import { conciergeFamilies } from '../../../catalog/domain/concierge-families.js';
+import { displayedCourseChoice, type CourseOffering } from '../../domain/course-offerings.js';
 import { PrismaInquiryRepository } from '../../../inquiries/infrastructure/repositories/prisma-inquiry.repository.js';
 import { LocalResourceStorageService } from '../../../resources/infrastructure/storage/local-resource-storage.service.js';
 import { prisma } from '../../../../shared/infrastructure/database/prisma.js';
@@ -120,6 +122,8 @@ export class ConciergeToolExecutorService {
         return this.getProgramDetail(args as GetProgramDetailArgs);
       case 'list_available_countries':
         return this.listAvailableCountries(args as ListAvailableCountriesArgs);
+      case 'list_available_course_types':
+        return this.listAvailableCourseTypes(args as { countryCode?: string });
       case 'list_destination_overview':
         return this.listDestinationOverview(args as ListDestinationOverviewArgs);
       case 'list_available_locations':
@@ -192,6 +196,11 @@ export class ConciergeToolExecutorService {
   private async detectUserIntent(args: DetectUserIntentArgs) {
     const latestMessage = (args.latestMessage ?? '').trim();
     const recentMessages = Array.isArray(args.recentMessages) ? args.recentMessages : [];
+    const previousReply = [...recentMessages].reverse().find((message) => message.direction === 'OUTBOUND')?.text ?? null;
+    const menuChoice = displayedCourseChoice(latestMessage, previousReply);
+    if (menuChoice) {
+      return { intent: menuChoice === 'LANGUAGE_COURSE' ? 'MENU_OPTION_1' : menuChoice === 'CAMP' ? 'MENU_OPTION_2' : 'MENU_OPTION_3', confidence: 1, menuWasShown: true };
+    }
 
     const prompt = [
       'Classify the user intent for a WhatsApp education concierge.',
@@ -481,6 +490,24 @@ export class ConciergeToolExecutorService {
     };
   }
 
+  private async listAvailableCourseTypes(args: { countryCode?: string } = {}): Promise<{ courseTypes: CourseOffering[] }> {
+    const [families, programs, result] = await Promise.all([
+      this.catalogRepository.findFamilies({ activeOnly: true }),
+      this.catalogRepository.findPrograms({ activeOnly: true, countryCode: args.countryCode }),
+      this.listAvailableResources({ activeOnly: true, type: 'BROCHURE', countryCode: args.countryCode }),
+    ]);
+    const activeFamilies = new Set(families.filter((family) => family.active).map((family) => family.key));
+    const courseTypes = conciergeFamilies.flatMap((definition): CourseOffering[] => {
+      if (!activeFamilies.has(definition.key)) return [];
+      const programCount = programs.filter((program) => program.active && program.family.key === definition.key
+        && program.country.active && program.family.active).length;
+      const brochureCount = result.resources.filter((resource) => resource.familyKey === definition.key).length;
+      return programCount || brochureCount
+        ? [{ familyKey: definition.key, name: definition.name, programCount, brochureCount }] : [];
+    });
+    return { courseTypes };
+  }
+
   private async listDestinationOverview(args: ListDestinationOverviewArgs) {
     const [countries, programs, resourceResult] = await Promise.all([
       this.catalogRepository.findCountries({ activeOnly: true }),
@@ -643,6 +670,10 @@ export class ConciergeToolExecutorService {
       : null;
     const targetDate = this.parseResourceTargetDate(args.targetDate);
     const compatibilityFilters: Prisma.ResourceWhereInput[] = resourceEligibilityFilters(targetDate);
+    compatibilityFilters.push(
+      { OR: [{ programId: null }, { program: { active: true } }] },
+      { OR: [{ familyId: null }, { family: { active: true } }] },
+    );
 
     if (studentAge != null) {
       compatibilityFilters.push(...this.resourceAgeCompatibilityFilters(studentAge));
@@ -651,14 +682,14 @@ export class ConciergeToolExecutorService {
 
     const resources = await prisma.resource.findMany({
       where: {
+        country: { active: true, ...(args.countryCode ? { code: args.countryCode } : {}) },
+        ...(args.familyKey ? { family: { active: true, key: args.familyKey } } : {}),
         ...((args.activeOnly ?? true) ? { active: true } : {}),
-        ...(args.countryCode ? { country: { code: args.countryCode } } : {}),
-        ...(args.familyKey ? { family: { key: args.familyKey } } : {}),
         ...(args.locationSlug ? { OR: [
           { locationAssignments: { some: { location: { slug: args.locationSlug } } } },
           { location: { slug: args.locationSlug } },
         ] } : {}),
-        ...(args.programSlug ? { program: { slug: args.programSlug } } : {}),
+        ...(args.programSlug ? { program: { active: true, slug: args.programSlug } } : {}),
         ...(args.type ? { type: args.type } : {}),
         ...(compatibilityFilters.length > 0 ? { AND: compatibilityFilters } : {}),
         versions: {
@@ -1109,6 +1140,12 @@ export class ConciergeToolExecutorService {
   }
 
   private async updateInquiry(args: UpdateInquiryArgs) {
+    if (args.familyKey) {
+      const { courseTypes } = await this.listAvailableCourseTypes();
+      if (!courseTypes.some((offering) => offering.familyKey === args.familyKey)) {
+        return { updated: false, reason: 'COURSE_TYPE_UNAVAILABLE', courseTypes };
+      }
+    }
     return this.inquiryRepository.update({
       inquiryId: args.inquiryId,
       countryCode: args.countryCode,

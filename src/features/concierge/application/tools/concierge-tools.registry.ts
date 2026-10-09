@@ -1,6 +1,15 @@
 export const conciergeTools = [
   {
     type: 'function',
+    name: 'list_available_course_types',
+    description: 'List only supported course families that currently have active programs or deliverable, valid brochures in active destinations. Use before displaying the greeting menu or offering a course type. A family row alone does not confirm an available offer; programCount does not promise a PDF.',
+    parameters: {
+      type: 'object', additionalProperties: false,
+      properties: { countryCode: { type: 'string' } }, required: [],
+    },
+  },
+  {
+    type: 'function',
     name: 'get_contact_info',
     description:
       'Get saved customer/contact information for the current WhatsApp contact or conversation. Use it to decide whether name/email already exist before asking again.',

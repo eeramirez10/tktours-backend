@@ -44,6 +44,11 @@ y las asociaciones con programas, recursos y solicitudes. Si hay familias equiva
 reutiliza una fila y reasigna sus vínculos; las filas históricas restantes se conservan inactivas.
 Las familias personalizadas, como Años escolares, no se reclasifican como circuitos.
 Las nuevas familias del menú reciben estas claves automáticamente desde el catálogo.
+El saludo consulta `list_available_course_types` y muestra únicamente los tipos del menú
+con programas activos en destinos activos o folletos vigentes disponibles. Una familia vacía
+no se ofrece. Los números se interpretan según el último menú mostrado, no según posiciones
+fijas. Si una oferta deja de existir, se explican las alternativas reales sin pedir datos de
+calificación ni prometer documentos inexistentes. Tener un programa no promete tener un PDF.
 Si falta una familia del menú tras limpiar datos, la solicitud la recupera sin crear programas
 ni folletos ficticios. No se requiere un reset de la base de datos.
 

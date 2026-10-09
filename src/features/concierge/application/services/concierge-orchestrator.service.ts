@@ -11,6 +11,8 @@ import { conciergePromptVersion, conciergeSystemPrompt } from '../prompts/concie
 import { conciergeStructuredResponseSchema } from '../schemas/concierge-structured-response.schema.js';
 import { conciergeTools } from '../tools/concierge-tools.registry.js';
 import { ConciergeToolExecutorService } from './concierge-tool-executor.service.js';
+import { conciergeFamilies } from '../../../catalog/domain/concierge-families.js';
+import { courseMenuText, displayedCourseChoice, type CourseOffering } from '../../domain/course-offerings.js';
 
 export type ConciergeTurnContext = {
   conversation: Awaited<ReturnType<PrismaConversationRepository['findById']>>;
@@ -21,6 +23,7 @@ export type ConciergeTurnContext = {
     text: string;
     createdAt: Date;
   } | null;
+  availableCourseTypes?: CourseOffering[];
 };
 
 type CampBrochureCandidate = {
@@ -93,6 +96,7 @@ export class ConciergeOrchestratorService {
       throw new NotFoundAppError('Incoming message does not belong to the conversation');
     }
 
+    context = { ...context, availableCourseTypes: await this.loadAvailableCourseTypes() };
     context = await this.hydrateInquiryFromLatestMessage(context);
 
     const currentControlState = await prisma.conversation.findUnique({
@@ -377,6 +381,19 @@ export class ConciergeOrchestratorService {
     maybeSet('studentAge', (extracted as { studentAge?: unknown }).studentAge);
     maybeSet('cityOfResidence', (extracted as { cityOfResidence?: unknown }).cityOfResidence);
     maybeSet('familyKey', (extracted as { familyKey?: unknown }).familyKey);
+    const menuChoice = displayedCourseChoice(context.latestMessage.text, previousOutbound?.text ?? null);
+    if (menuChoice) inquiryUpdate.familyKey = menuChoice;
+    if (inquiryUpdate.familyKey && context.availableCourseTypes
+      && !context.availableCourseTypes.some((offering) => offering.familyKey === inquiryUpdate.familyKey)) {
+      delete inquiryUpdate.familyKey;
+    }
+    if (inquiryUpdate.familyKey && activeInquiry?.family?.key
+      && inquiryUpdate.familyKey !== activeInquiry.family.key) {
+      // A program or accommodation from the previous course type cannot be reused.
+      if (!Object.hasOwn(inquiryUpdate, 'programSlug')) inquiryUpdate.programSlug = null;
+      if (!Object.hasOwn(inquiryUpdate, 'locationSlug')) inquiryUpdate.locationSlug = null;
+      if (!Object.hasOwn(inquiryUpdate, 'accommodationKey')) inquiryUpdate.accommodationKey = null;
+    }
     maybeSet('accommodationKey', (extracted as { accommodationKey?: unknown }).accommodationKey);
     maybeSet('preferredStartMonth', (extracted as { preferredStartMonth?: unknown }).preferredStartMonth);
     maybeSet('preferredStartYear', (extracted as { preferredStartYear?: unknown }).preferredStartYear);
@@ -524,6 +541,7 @@ export class ConciergeOrchestratorService {
         currentStage: context.conversation?.currentStage,
       },
       activeInquiry: context.activeInquiry,
+      availableCourseTypes: context.availableCourseTypes,
       campBrochureState,
       latestMessage: context.latestMessage,
       recentMessages: recentMessages.map((message) => ({
@@ -653,6 +671,35 @@ export class ConciergeOrchestratorService {
   }> {
     const detectedIntent = await this.detectIntentWithTool(context);
     const policySignals = await this.evaluatePolicySignalsWithTool(context);
+    const requestedFamily = this.courseFamilyFromIntent(detectedIntent);
+    if (detectedIntent === 'GREETING' || requestedFamily || context.availableCourseTypes
+      || (!context.activeInquiry?.family?.key && detectedIntent === 'UNKNOWN' && !policySignals.menuWasShown)) {
+      const offerings = context.availableCourseTypes ?? await this.loadAvailableCourseTypes();
+      context = { ...context, availableCourseTypes: offerings };
+      const family = requestedFamily ?? context.activeInquiry?.family?.key;
+      const initialUnknown = !family && detectedIntent === 'UNKNOWN' && !policySignals.menuWasShown;
+      const asksForTypes = !family && (detectedIntent === 'ASK_AVAILABLE_PROGRAMS' || detectedIntent === 'REQUEST_QUOTE');
+      if (detectedIntent === 'GREETING' || initialUnknown || asksForTypes || !offerings.length
+        || (family && !offerings.some((offering) => offering.familyKey === family))) {
+        const unavailable = detectedIntent !== 'GREETING' && Boolean(family);
+        const contact = context.activeInquiry?.contact ?? context.conversation?.contact;
+        const name = contact?.firstName?.trim();
+        const greeting = `¡Hola${name ? `, ${name}` : ''}! 👋 Gracias por contactar a TKTours. Con gusto te ayudo a encontrar una opción ideal para estudiar, viajar y vivir una experiencia internacional.`;
+        const label = conciergeFamilies.find((item) => item.key === family)?.name ?? 'esa opción';
+        const introduction = unavailable
+          ? `Por el momento no tenemos opciones disponibles de ${label.toLowerCase()}. Con gusto, en TKTours puedo ayudarte con estas alternativas.`
+          : detectedIntent === 'GREETING' ? greeting : `Con gusto${name ? `, ${name}` : ''}. En TKTours puedo ayudarte con estas opciones.`;
+        const replyText = offerings.length
+          ? `${introduction}\n\n¿Qué te gustaría explorar?\n${courseMenuText(offerings)}`
+          : `${detectedIntent === 'GREETING' ? `${greeting}\n\n` : ''}Por el momento no tengo programas ni folletos vigentes disponibles para ofrecerte. Un asesor de TKTours puede orientarte con información actualizada.`;
+        return {
+          structured: { ...parsed, replyText, missingFields: [], shouldAskFollowUp: false,
+            nextStage: offerings.length ? 'START' : 'ESCALATED', shouldRefreshRecommendations: false },
+          trace: { strategy: 'none', details: { reason: unavailable ? 'course_type_unavailable' : 'live_course_menu', availableFamilies: offerings.map((offering) => offering.familyKey) } },
+          outboundMediaUrl: null, outboundMediaUrls: null,
+        };
+      }
+    }
     context = await this.hydrateInquiryFamilyFromIntent(context, detectedIntent);
     const enforcedField = this.getEnforcedNextField(context.activeInquiry);
     const languageCourseAgeBlock = this.getLanguageCourseAgeBlock(context, detectedIntent);
@@ -675,32 +722,6 @@ export class ConciergeOrchestratorService {
             reason: 'language_course_min_age_block',
             studentAge: languageCourseAgeBlock.studentAge,
             minAge: 15,
-          },
-        },
-        contextPatch,
-        outboundMediaUrl: null,
-        outboundMediaUrls: null,
-      };
-    }
-
-    if (detectedIntent === 'GREETING') {
-      const replyText = this.stripCatalogOptionsBlocks(parsed.replyText, [
-        'Opciones disponibles:',
-        'Opciones de alojamiento disponibles:',
-      ]);
-      return {
-        structured: {
-          ...parsed,
-          replyText,
-          shouldAskFollowUp: false,
-          missingFields: [],
-          nextStage: 'START',
-          shouldRefreshRecommendations: false,
-        },
-        trace: {
-          strategy: 'none',
-          details: {
-            reason: 'greeting_menu',
           },
         },
         contextPatch,
@@ -767,27 +788,6 @@ export class ConciergeOrchestratorService {
           strategy: handoffStep === 'confirm_handoff' ? 'none' : 'single_follow_up',
           details: {
             reason: `advisor_handoff_${handoffStep}`,
-          },
-        },
-        contextPatch,
-      };
-    }
-
-    if (!context.activeInquiry?.family?.key && detectedIntent === 'UNKNOWN' && !policySignals.menuWasShown) {
-      return {
-        structured: {
-          ...parsed,
-          shouldAskFollowUp: false,
-          missingFields: [],
-          nextStage: 'START',
-          shouldRefreshRecommendations: false,
-        },
-        trace: {
-          strategy: 'none',
-          details: {
-            reason: 'initial_unknown_keep_menu',
-            intent: detectedIntent,
-            confidence: policySignals.confidence,
           },
         },
         contextPatch,
@@ -2021,13 +2021,14 @@ export class ConciergeOrchestratorService {
       familyKey = 'LANGUAGE_COURSE';
     } else if (detectedIntent === 'MENU_OPTION_2' || detectedIntent === 'ASK_CAMPS') {
       familyKey = 'CAMP';
-    } else if (detectedIntent === 'MENU_OPTION_3' || detectedIntent === 'ASK_CIRCUITS' || detectedIntent === 'REQUEST_QUOTE') {
+    } else if (detectedIntent === 'MENU_OPTION_3' || detectedIntent === 'ASK_CIRCUITS') {
       familyKey = 'SCHOOL_PROGRAM';
     }
 
     if (!familyKey) {
       return context;
     }
+    if (context.availableCourseTypes && !context.availableCourseTypes.some((offering) => offering.familyKey === familyKey)) return context;
 
     await this.inquiryRepository.update({
       inquiryId: context.activeInquiry.id,
@@ -2060,6 +2061,8 @@ export class ConciergeOrchestratorService {
       | 'UNKNOWN'
   > {
     const latestMessage = context.latestMessage?.text ?? '';
+    const choice = displayedCourseChoice(latestMessage, this.findPreviousOutboundMessage(context)?.text ?? null);
+    if (choice) return choice === 'LANGUAGE_COURSE' ? 'MENU_OPTION_1' : choice === 'CAMP' ? 'MENU_OPTION_2' : 'MENU_OPTION_3';
     const recentMessages = (context.conversation?.messages ?? [])
       .slice(-12)
       .map((message) => ({
@@ -2781,38 +2784,23 @@ export class ConciergeOrchestratorService {
   }
 
   private async buildProgramFamilyOptionsList(context: ConciergeTurnContext): Promise<string | null> {
-    const countryCode = context.activeInquiry?.country?.code ?? undefined;
-    const programsResult = await this.toolExecutor.execute('list_available_programs', {
-      activeOnly: true,
-      countryCode,
-    });
+    const offerings = await this.loadAvailableCourseTypes(context.activeInquiry?.country?.code);
+    return offerings.length ? `Opciones disponibles:\n${courseMenuText(offerings)}` : null;
+  }
 
-    const families =
-      programsResult &&
-      typeof programsResult === 'object' &&
-      Array.isArray((programsResult as { programs?: unknown }).programs)
-        ? (programsResult as { programs: Array<{ familyKey?: unknown }> }).programs
-            .map((program) => (typeof program?.familyKey === 'string' ? program.familyKey : null))
-            .filter((key): key is string => Boolean(key))
-        : [];
+  private async loadAvailableCourseTypes(countryCode?: string): Promise<CourseOffering[]> {
+    const result = await this.toolExecutor.execute('list_available_course_types', { countryCode });
+    if (!result || typeof result !== 'object' || !Array.isArray((result as { courseTypes?: unknown }).courseTypes)) return [];
+    return (result as { courseTypes: CourseOffering[] }).courseTypes.filter((offering) =>
+      conciergeFamilies.some((family) => family.key === offering.familyKey)
+      && (offering.programCount > 0 || offering.brochureCount > 0));
+  }
 
-    const unique = [...new Set(families)];
-    if (!unique.length) {
-      return null;
-    }
-
-    const labels: string[] = [];
-    for (const key of unique) {
-      if (key === 'LANGUAGE_COURSE') labels.push('Cursos de idiomas');
-      if (key === 'CAMP') labels.push('Campamentos / viajes');
-      if (key === 'SCHOOL_PROGRAM') labels.push('Circuitos por el mundo');
-    }
-
-    if (!labels.length) {
-      return null;
-    }
-
-    return `Opciones disponibles:\n${labels.map((label, index) => `${index + 1}) ${label}`).join('\n')}`;
+  private courseFamilyFromIntent(intent: string): CourseOffering['familyKey'] | null {
+    if (intent === 'MENU_OPTION_1' || intent === 'ASK_LANGUAGE_COURSES') return 'LANGUAGE_COURSE';
+    if (intent === 'MENU_OPTION_2' || intent === 'ASK_CAMPS') return 'CAMP';
+    if (intent === 'MENU_OPTION_3' || intent === 'ASK_CIRCUITS') return 'SCHOOL_PROGRAM';
+    return null;
   }
 
   private async buildCountryOptionsList(context?: ConciergeTurnContext): Promise<string | null> {

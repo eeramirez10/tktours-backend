@@ -6,6 +6,7 @@ export type ConciergeToolName =
   | 'detect_user_intent'
   | 'evaluate_policy_signals'
   | 'list_available_countries'
+  | 'list_available_course_types'
   | 'list_destination_overview'
   | 'list_available_locations'
   | 'list_available_programs'
