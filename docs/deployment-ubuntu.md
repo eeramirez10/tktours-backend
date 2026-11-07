@@ -44,6 +44,12 @@ y las asociaciones con programas, recursos y solicitudes. Si hay familias equiva
 reutiliza una fila y reasigna sus vínculos; las filas históricas restantes se conservan inactivas.
 Las familias personalizadas, como Años escolares, no se reclasifican como circuitos.
 Las nuevas familias del menú reciben estas claves automáticamente desde el catálogo.
+Los PDF anteriores que ahora pertenecen a `CAMP` deben tener sus temporadas, edición y
+vigencia para compartir revisadas en Recursos > Editar. Tener el archivo almacenado o el
+texto extraído no significa que sea elegible para el concierge. La reconciliación de claves
+no inventa estos datos ni crea reglas de alojamiento a partir del PDF.
+Si faltan alojamientos configurados, el concierge solicita confirmación por un asesor;
+no debe preguntar por opciones inexistentes ni afirmar por eso que no hay folletos.
 El saludo consulta `list_available_course_types` y muestra únicamente los tipos del menú
 con programas activos en destinos activos o folletos vigentes disponibles. Una familia vacía
 no se ofrece. Los números se interpretan según el último menú mostrado, no según posiciones

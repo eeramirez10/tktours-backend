@@ -162,6 +162,7 @@ export class ConciergeOrchestratorService {
           'search_resource_content',
           'list_available_programs',
           'list_available_locations',
+          'list_available_accommodations',
           'list_weeks_options',
           'get_program_detail',
           'find_matching_programs',
@@ -746,6 +747,29 @@ export class ConciergeOrchestratorService {
     }
 
     const asksAboutOptions = detectedIntent === 'ASK_AVAILABLE_COUNTRIES' || detectedIntent === 'ASK_AVAILABLE_PROGRAMS';
+    const question = context.latestMessage?.text ?? '';
+    const previousQuestion = this.findPreviousOutboundMessage(context)?.text ?? '';
+    const asksForTypes = /\b(?:qu[eé]\s+(?:tipos|opciones)|cu[aá]les\s+(?:tienes|tienen|hay|son))\b/i.test(question);
+    const namesAnotherTopic = /\b(?:programas?|cursos?|campamentos?|pa[ií]ses|temporadas?)\b/i.test(question);
+    const asksForAccommodation = policySignals.asksAccommodationOptions
+      || (asksForTypes && !namesAnotherTopic
+        && (enforcedField === 'accommodation' || /alojamiento|hospedaje/i.test(previousQuestion)));
+    if (asksForAccommodation) {
+      const accommodationOptions = await this.buildAccommodationOptionsList(context);
+      return {
+        structured: {
+          ...parsed,
+          replyText: accommodationOptions
+            ? `Con gusto 😊. ${accommodationOptions}\n¿Cuál prefieren?`
+            : this.unconfirmedAccommodationReply,
+          missingFields: [], shouldAskFollowUp: Boolean(accommodationOptions),
+          nextStage: accommodationOptions ? 'QUALIFY_ACCOMMODATION' : 'ESCALATED',
+          shouldRefreshRecommendations: false,
+        },
+        trace: { strategy: accommodationOptions ? 'single_follow_up' : 'none', details: { reason: 'contextual_accommodation_options' } },
+        contextPatch, outboundMediaUrl: null, outboundMediaUrls: null,
+      };
+    }
     const isAnsweringQuestion = parsed.replyIntent === 'ANSWER_QUESTION'
       || options.resourceContentSearchUsed
       || asksAboutOptions
@@ -1052,6 +1076,15 @@ export class ConciergeOrchestratorService {
       };
     }
 
+    if (nextField === 'accommodation' && !await this.buildAccommodationOptionsList(context)) {
+      return {
+        structured: { ...parsed, replyText: this.unconfirmedAccommodationReply, shouldAskFollowUp: false,
+          nextStage: 'ESCALATED', missingFields: [], shouldRefreshRecommendations: false },
+        trace: { strategy: 'none', details: { reason: 'unconfirmed_accommodation_options' } },
+        contextPatch,
+      };
+    }
+
     const replyText = await this.buildPromptDrivenFollowUp({
       nextField,
       context,
@@ -1100,7 +1133,8 @@ export class ConciergeOrchestratorService {
         'Distingue un programa sin folleto de un folleto disponible. No vuelvas a pedir datos pendientes en esta respuesta.',
         'Responde solo texto plano.',
       ].join('\n'),
-      input: JSON.stringify({ question, overview, content }),
+      input: JSON.stringify({ question, previousAssistantMessage: this.findPreviousOutboundMessage(context)?.text ?? null,
+        expectedField: this.getEnforcedNextField(inquiry), overview, content }),
     });
     return response.outputText.trim() || 'Con gusto te ayudo. Ese detalle no aparece confirmado en la información disponible; un asesor de TKTours puede revisarlo contigo.';
   }
@@ -2832,6 +2866,10 @@ export class ConciergeOrchestratorService {
     );
     const options = filteredCountries.map((country, index) => `${index + 1}) ${country}`).join('\n');
     return `Opciones disponibles:\n${options}`;
+  }
+
+  private get unconfirmedAccommodationReply(): string {
+    return 'Con gusto 😊. Necesito confirmar qué opciones de alojamiento aplican a la edad y las fechas que me compartiste. Un asesor de TKTours puede ayudarte a revisarlas.';
   }
 
   private async buildAccommodationOptionsList(context: ConciergeTurnContext): Promise<string | null> {
