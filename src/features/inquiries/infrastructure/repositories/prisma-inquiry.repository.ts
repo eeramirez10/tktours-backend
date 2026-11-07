@@ -3,6 +3,7 @@ import { Prisma } from '@prisma/client';
 import { ConflictAppError, NotFoundAppError } from '../../../../shared/domain/errors/app-error.js';
 import { prisma } from '../../../../shared/infrastructure/database/prisma.js';
 import { resolveConciergeFamily } from '../../../catalog/infrastructure/repositories/resolve-concierge-family.js';
+import { resolveAccommodationPreference } from '../../../catalog/infrastructure/repositories/resolve-accommodation-preference.js';
 import type { InquiryRepository } from '../../domain/repositories/inquiry.repository.js';
 import type {
   CreateInquiryInput,
@@ -351,7 +352,7 @@ export class PrismaInquiryRepository implements InquiryRepository {
     }
 
     const accommodationType = input.accommodationKey
-      ? await prisma.accommodationType.findUnique({ where: { key: input.accommodationKey as never }, select: { id: true } })
+      ? await resolveAccommodationPreference(input.accommodationKey)
       : null;
     if (input.accommodationKey && !accommodationType) {
       throw new NotFoundAppError(`Accommodation not found for key ${input.accommodationKey}`);

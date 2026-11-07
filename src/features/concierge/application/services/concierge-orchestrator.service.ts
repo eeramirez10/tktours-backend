@@ -869,7 +869,8 @@ export class ConciergeOrchestratorService {
         context,
         candidates: selectedCandidates,
       });
-      const followUp = nextField
+      const accommodationNeedsConfirmation = nextField === 'accommodation' && !await this.buildAccommodationOptionsList(context);
+      const followUp = accommodationNeedsConfirmation ? this.unconfirmedAccommodationReply : nextField
         ? await this.buildPromptDrivenFollowUp({
             nextField,
             context,
@@ -890,17 +891,18 @@ export class ConciergeOrchestratorService {
         structured: {
           ...parsed,
           replyText: followUp ? `${sendReply}\n${followUp}` : sendReply,
-          shouldAskFollowUp: Boolean(followUp),
-          nextStage: followUp ? this.mapNextStageFromField(nextField!) : 'SEND_RESOURCE',
-          missingFields: followUp ? [nextField!] : [],
+          shouldAskFollowUp: Boolean(followUp) && !accommodationNeedsConfirmation,
+          nextStage: accommodationNeedsConfirmation ? 'ESCALATED' : followUp ? this.mapNextStageFromField(nextField!) : 'SEND_RESOURCE',
+          missingFields: followUp && !accommodationNeedsConfirmation ? [nextField!] : [],
           shouldRefreshRecommendations: false,
         },
         trace: {
-          strategy: followUp ? 'single_follow_up' : 'none',
+          strategy: followUp && !accommodationNeedsConfirmation ? 'single_follow_up' : 'none',
           details: {
             reason: 'camp_brochure_sent',
             resourceIds: selectedCandidates.map((candidate) => candidate.resourceId),
             nextField: nextField ?? null,
+            accommodationNeedsConfirmation,
           },
         },
         contextPatch,

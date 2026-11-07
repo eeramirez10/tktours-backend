@@ -37,6 +37,12 @@ Los archivos se guardan en el volumen `tktours-concierge-resources`, independien
 
 ## Migraciones Prisma
 
+La migración `20261108000000_restore_accommodation_reference_types` restaura los tres
+identificadores de preferencias de alojamiento si faltan. Conserva los IDs, nombres y estados
+ya existentes. No añade reglas de disponibilidad a programas ni confirma plazas o reservas.
+El registro de una preferencia también recupera su referencia de forma idempotente para
+evitar que respuestas como “Residencia” interrumpan el concierge después de limpiar datos.
+
 La migración `20261008180000_reconcile_concierge_family_keys` corrige las claves de familias
 creadas con nombres en español: Cursos de Idiomas usa `LANGUAGE_COURSE`, Campamentos usa
 `CAMP` y Tours / Circuitos por el mundo usa `SCHOOL_PROGRAM`. Conserva sus identificadores

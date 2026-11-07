@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { ConciergeOrchestratorService } from './concierge-orchestrator.service.js';
+import { prisma } from '../../../../shared/infrastructure/database/prisma.js';
+import { PrismaInquiryRepository } from '../../../inquiries/infrastructure/repositories/prisma-inquiry.repository.js';
 
 const turnContext = {
   conversation: { messages: [
@@ -79,4 +81,36 @@ test('the follow-up flow never asks customers to choose unconfigured accommodati
   assert.equal(result.structured.nextStage, 'ESCALATED');
   assert.equal(result.structured.shouldAskFollowUp, false);
   assert.equal(result.trace.details.reason, 'unconfirmed_accommodation_options');
+});
+
+test('Residencia can be saved as a preference when accommodation reference rows are missing', async (t) => {
+  const original = prisma.accommodationType.upsert;
+  prisma.accommodationType.upsert = (async (args: { where: { key: string }; update: object }) => {
+    assert.equal(args.where.key, 'UNIVERSITY_RESIDENCE');
+    assert.deepEqual(args.update, {});
+    return { id: 'residence-id' };
+  }) as unknown as typeof original;
+  t.after(() => { prisma.accommodationType.upsert = original; });
+  const repository = new PrismaInquiryRepository() as unknown as {
+    resolveRelations: (input: object) => Promise<{ accommodationTypeId: string | null }>;
+  };
+  assert.equal((await repository.resolveRelations({ accommodationKey: 'UNIVERSITY_RESIDENCE' })).accommodationTypeId, 'residence-id');
+});
+
+test('sending a brochure does not append an unsupported accommodation selection', async () => {
+  const { service } = harness([]);
+  const candidate = { resourceId: 'resource', versionId: 'version', fileUrl: 'https://example.com/camp.pdf', seasonKeys: ['SUMMER'] };
+  Object.assign(service, {
+    resolveCampBrochureState: async () => ({ state: { status: 'OFFERED', candidates: [candidate] }, contextPatch: null }),
+    resolveCampBrochureReplyAction: async () => ({ action: 'SEND', selectedSeasonKeys: ['SUMMER'], sendAll: false }),
+    buildPromptDrivenCampBrochureSend: async () => 'Con gusto, te comparto el folleto.',
+  });
+  const context = { ...turnContext, latestMessage: { ...turnContext.latestMessage, text: 'Sí' } };
+  const result = await service.applyReplyPolicy({ ...parsed, replyIntent: 'CONTINUE_FLOW' }, context,
+    { resourceContentSearchUsed: false, dataToolUsed: false });
+  assert.match(result.structured.replyText, /te comparto el folleto/);
+  assert.match(result.structured.replyText, /confirmar qué opciones de alojamiento/);
+  assert.doesNotMatch(result.structured.replyText, /qué tipo de alojamiento prefieren/);
+  assert.equal(result.structured.shouldAskFollowUp, false);
+  assert.equal(result.structured.nextStage, 'ESCALATED');
 });
