@@ -1,7 +1,8 @@
+import { resourceTripCompatibility } from '../../domain/resource-trip-compatibility.js';
 import { prisma } from '../../../../shared/infrastructure/database/prisma.js';
 import { resourceEligibilityFilters, resourceValidityStatus } from '../../domain/resource-validity.js';
 
-type ValidatedDelivery = { urls: string[]; versions: Array<{ resourceId: string; versionId: string }> };
+type ValidatedDelivery = { urls: string[]; versions: Array<{ resourceId: string; versionId: string; url?: string }> };
 
 export class ResourceDeliveryGuardService {
   async filterMediaUrls(urls: string[], inquiryId: string | null): Promise<string[]> {
@@ -41,7 +42,7 @@ export class ResourceDeliveryGuardService {
           AND: resourceEligibilityFilters(targetDate),
           ...(inquiry?.countryId ? { countryId: inquiry.countryId } : {}),
           ...(inquiry?.familyId ? { familyId: inquiry.familyId } : {}),
-          ...(inquiry?.programId ? { programId: inquiry.programId } : {}),
+          ...(!inquiry?.locationId && inquiry?.programId ? { programId: inquiry.programId } : {}),
           ...(inquiry?.locationId ? { OR: [
             { locationId: inquiry.locationId },
             { locationAssignments: { some: { locationId: inquiry.locationId } } },
@@ -61,6 +62,7 @@ export class ResourceDeliveryGuardService {
       const minAge = resource.minAge ?? resource.program?.minAge;
       const maxAge = resource.maxAge ?? resource.program?.maxAge;
       return resourceValidityStatus(resource) === 'CURRENT'
+        && resourceTripCompatibility(resource, inquiry?.preferredStartMonth, inquiry?.preferredStartYear) !== 'INCOMPATIBLE'
         && (age == null || ((minAge == null || age >= minAge) && (maxAge == null || age <= maxAge)));
     });
     const matchesUrl = (version: (typeof allowed)[number], { url, pathname }: (typeof parsedUrls)[number]) => version.sourceType === 'EXTERNAL_LINK'
@@ -69,7 +71,7 @@ export class ResourceDeliveryGuardService {
     return {
       urls: parsedUrls.filter((url) => allowed.some((version) => matchesUrl(version, url))).map(({ url }) => url),
       versions: allowed.filter((version) => parsedUrls.some((url) => matchesUrl(version, url)))
-        .map((version) => ({ resourceId: version.resource.id, versionId: version.id })),
+        .map((version) => ({ resourceId: version.resource.id, versionId: version.id, url: parsedUrls.find((url) => matchesUrl(version, url))!.url })),
     };
   }
 }

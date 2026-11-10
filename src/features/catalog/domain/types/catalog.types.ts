@@ -44,6 +44,7 @@ export type CatalogProgramRecommendationQuery = {
   studentAge?: number;
   accommodationKey?: CatalogAccommodationKey;
   preferredStartMonth?: number;
+  preferredStartYear?: number;
   weeks?: number;
   search?: string;
 };
@@ -200,6 +201,10 @@ export type CatalogResourceSummary = {
   month: number | null;
   year: number | null;
   seasonKeys: CatalogCampSeasonKey[];
+  minWeeks: number | null;
+  maxWeeks: number | null;
+  minAge: number | null;
+  maxAge: number | null;
   validFrom: string | null;
   validUntil: string | null;
 };

@@ -1,3 +1,4 @@
+import { ResourceSendHistoryService } from '../../../resources/application/services/resource-send-history.service.js';
 import { Prisma } from '@prisma/client';
 
 import { logger } from '../../../../shared/config/logger.js';
@@ -21,6 +22,8 @@ export class MetaWhatsAppStatusService {
     if (!messageId) {
       return;
     }
+
+    await new ResourceSendHistoryService().recordStatusCallback(messageId, payload.status);
 
     const directMatch = await prisma.message.findFirst({
       where: { providerMessageId: messageId },

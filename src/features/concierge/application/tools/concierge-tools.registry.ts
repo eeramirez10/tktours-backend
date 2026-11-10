@@ -100,6 +100,8 @@ export const conciergeTools = [
         familyKey: { type: 'string', enum: ['CAMP', 'LANGUAGE_COURSE', 'SCHOOL_PROGRAM'] },
         countryCode: { type: 'string' },
         studentAge: { type: 'number' },
+        targetMonth: { type: 'integer', minimum: 1, maximum: 12 },
+        targetYear: { type: 'integer' },
         targetDate: { type: 'string', description: 'ISO date YYYY-MM-DD for the intended start.' },
       },
       required: [],
@@ -164,6 +166,8 @@ export const conciergeTools = [
           enum: ['BROCHURE', 'MANUAL'],
         },
         studentAge: { type: 'number' },
+        targetMonth: { type: 'integer', minimum: 1, maximum: 12 },
+        targetYear: { type: 'integer' },
         targetDate: { type: 'string', description: 'Requested travel month/year as YYYY-MM-01. Matches any travel dates overlapping that month. Commercial sharing validity is always evaluated against today, independently.' },
         activeOnly: { type: 'boolean' },
       },
@@ -174,7 +178,7 @@ export const conciergeTools = [
     type: 'function',
     name: 'search_resource_content',
     description:
-      'Search extracted PDF text for factual answers about a brochure or manual. Always use the active inquiryId and the customer question. Results are restricted to resources compatible with that inquiry.',
+      'Read administrator-confirmed resource form fields for factual answers about a brochure or manual. Never read or reinterpret raw PDF text during chat. Always use the active inquiryId and the customer question. Results are restricted to resources compatible with that inquiry.',
     parameters: {
       type: 'object',
       additionalProperties: false,
@@ -210,7 +214,7 @@ export const conciergeTools = [
   {
     type: 'function',
     name: 'list_weeks_options',
-    description: 'Obtiene el rango mínimo y máximo de duración en semanas desde las reglas del catálogo.',
+    description: 'Obtiene la duración confirmada por recurso; nunca hereda reglas de semanas del programa.',
     parameters: {
       type: 'object',
       additionalProperties: false,
@@ -221,6 +225,10 @@ export const conciergeTools = [
           enum: ['CAMP', 'LANGUAGE_COURSE', 'SCHOOL_PROGRAM'],
         },
         programSlug: { type: 'string' },
+        locationSlug: { type: 'string' },
+        studentAge: { type: 'number' },
+        targetMonth: { type: 'integer', minimum: 1, maximum: 12 },
+        targetYear: { type: 'integer' },
       },
       required: [],
     },

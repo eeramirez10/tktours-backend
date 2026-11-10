@@ -46,6 +46,8 @@ export type ListDestinationOverviewArgs = {
   countryCode?: string;
   studentAge?: number;
   targetDate?: string;
+  targetMonth?: number;
+  targetYear?: number;
 };
 
 export type ListAvailableProgramsArgs = {
@@ -69,6 +71,8 @@ export type ListAvailableResourcesArgs = {
   type?: 'BROCHURE' | 'MANUAL';
   studentAge?: number;
   targetDate?: string;
+  targetMonth?: number;
+  targetYear?: number;
   activeOnly?: boolean;
 };
 
@@ -87,6 +91,10 @@ export type ListAvailableAccommodationsArgs = {
 };
 
 export type ListWeeksOptionsArgs = {
+  locationSlug?: string;
+  studentAge?: number;
+  targetMonth?: number;
+  targetYear?: number;
   countryCode?: string;
   familyKey?: 'CAMP' | 'LANGUAGE_COURSE' | 'SCHOOL_PROGRAM';
   programSlug?: string;

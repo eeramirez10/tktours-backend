@@ -51,5 +51,5 @@ test('local attachments must belong to the validated resource as well as the cur
   }]) as unknown as typeof prisma.resourceVersion.findMany;
   const delivery = await new ResourceDeliveryGuardService().prepareDelivery([validUrl, wrongParent], null);
   assert.deepEqual(delivery.urls, [validUrl]);
-  assert.deepEqual(delivery.versions, [{ resourceId, versionId }]);
+  assert.deepEqual(delivery.versions, [{ resourceId, versionId, url: validUrl }]);
 });

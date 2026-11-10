@@ -309,6 +309,9 @@ model Resource {
   validUntil      DateTime?              @db.Date
   minAge          Int?
   maxAge          Int?
+  minWeeks        Int?
+  maxWeeks        Int?
+  tariffs         Json?
   priceFrom       Decimal?               @db.Decimal(12, 2)
   priceCurrency   String?                @db.VarChar(3)
   priceUnit       String?                @db.VarChar(40)
@@ -511,6 +514,9 @@ model InquiryResourceSend {
   inquiryId         String @db.Uuid
   resourceId        String @db.Uuid
   resourceVersionId String? @db.Uuid
+  attemptKey        String?          @unique
+  deliveryStatus    String           @default("UNKNOWN")
+  providerMessageId String?
   sentReason        String?
   inquiry           Inquiry          @relation(fields: [inquiryId], references: [id], onDelete: Cascade)
   resource          Resource         @relation(fields: [resourceId], references: [id])
@@ -518,6 +524,7 @@ model InquiryResourceSend {
   sentAt            DateTime         @default(now())
 
   @@index([inquiryId, sentAt])
+  @@index([inquiryId, resourceVersionId, sentAt])
 }
 
 model ConciergeTurn {

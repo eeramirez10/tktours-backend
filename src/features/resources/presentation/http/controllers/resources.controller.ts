@@ -1,3 +1,4 @@
+import { ResourceStoredDocumentAnalysisService } from '../../../application/services/resource-stored-document-analysis.service.js';
 import { access } from 'node:fs/promises';
 import type { NextFunction, Request, Response } from 'express';
 import multer from 'multer';
@@ -230,6 +231,18 @@ export class ResourcesController {
       return res.json({ ok: true, data });
     } catch (error) {
       return next(error instanceof ZodError ? toValidationError(error, 'Invalid document analysis body') : error);
+    }
+  }
+
+  async analyzeStoredDocument(req: Request, res: Response, next: NextFunction) {
+    try {
+      getAuthenticatedAdminId(req);
+      const { resourceId } = resourceIdParamsSchema.parse(req.params);
+      const body = analyzeResourceDocumentBodySchema.parse(req.body);
+      const data = await new ResourceStoredDocumentAnalysisService(resourceRepository, storageService, documentAnalysisService).analyze(resourceId, body);
+      return res.json({ ok: true, data });
+    } catch (error) {
+      return next(error instanceof ZodError ? toValidationError(error, 'Invalid document analysis request') : error);
     }
   }
 

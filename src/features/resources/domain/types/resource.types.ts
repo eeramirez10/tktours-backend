@@ -1,3 +1,12 @@
+export type ResourceTariff = {
+  kind: 'PACKAGE' | 'EXTRA_WEEK';
+  weeks: number | null;
+  modality: string;
+  amount: number;
+  currency: string;
+  notes: string | null;
+};
+
 export type ResourceFamilyKey = string;
 export type ResourceSeasonKey = 'SUMMER' | 'EASTER' | 'WINTER';
 
@@ -51,6 +60,7 @@ export type ResourceBaseInput = {
   validUntil?: Date | null;
   minAge?: number | null;
   maxAge?: number | null;
+  tariffs?: ResourceTariff[] | null;
   priceFrom?: number | null;
   priceCurrency?: string | null;
   priceUnit?: string | null;
@@ -86,6 +96,7 @@ export type UpdateResourceInput = {
   validUntil?: Date | null;
   minAge?: number | null;
   maxAge?: number | null;
+  tariffs?: ResourceTariff[] | null;
   priceFrom?: number | null;
   priceCurrency?: string | null;
   priceUnit?: string | null;
@@ -194,6 +205,7 @@ export type ResourceListItem = {
   validUntil: Date | null;
   minAge: number | null;
   maxAge: number | null;
+  tariffs: ResourceTariff[];
   priceFrom: number | null;
   priceCurrency: string | null;
   priceUnit: string | null;

@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { optionalResourceSeasonsSchema } from './resource-season.schemas.js';
 
 import {
+  optionalResourceTariffsSchema,
   optionalNullableCurrencySchema,
   optionalNullableDateSchema,
   optionalNullableIntSchema,
@@ -120,6 +121,7 @@ export const uploadResourceBodySchema = z
     validUntil: optionalNullableDateSchema,
     minAge: optionalNullableIntSchema(0, 120),
     maxAge: optionalNullableIntSchema(0, 120),
+    tariffs: optionalResourceTariffsSchema,
     priceFrom: optionalNullableMoneySchema,
     priceCurrency: optionalNullableCurrencySchema,
     priceUnit: optionalNullableShortStringSchema(40),
@@ -162,6 +164,7 @@ export const uploadResourceBodySchema = z
     validUntil: value.validUntil ?? null,
     minAge: value.minAge ?? null,
     maxAge: value.maxAge ?? null,
+    tariffs: value.tariffs ?? [],
     priceFrom: value.priceFrom ?? null,
     priceCurrency: value.priceCurrency ?? null,
     priceUnit: value.priceUnit ?? null,

@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { resourceTariffSchema } from '../schemas/resource-tariff.schema.js';
 
 import { ValidationAppError } from '../../../../shared/domain/errors/app-error.js';
 import { logger } from '../../../../shared/config/logger.js';
@@ -21,6 +22,7 @@ const analysisSchema = z.object({
   maxAge: z.number().int().min(0).max(120).nullable(),
   minWeeks: z.number().int().min(1).max(104).nullable(),
   maxWeeks: z.number().int().min(1).max(104).nullable(),
+  tariffs: z.array(resourceTariffSchema).max(100).default([]),
   priceFrom: z.number().finite().nonnegative().nullable(),
   priceCurrency: z.string().trim().length(3).nullable(),
   priceUnit: z.string().trim().max(40).nullable(),
@@ -49,6 +51,16 @@ const analysisJsonSchema = {
     maxAge: { type: ['integer', 'null'] },
     minWeeks: { type: ['integer', 'null'], minimum: 1, maximum: 104 },
     maxWeeks: { type: ['integer', 'null'], minimum: 1, maximum: 104 },
+    tariffs: { type: 'array', items: {
+      type: 'object', additionalProperties: false,
+      properties: {
+        kind: { type: 'string', enum: ['PACKAGE', 'EXTRA_WEEK'] },
+        weeks: { type: ['integer', 'null'] },
+        modality: { type: 'string' }, amount: { type: 'number' }, currency: { type: 'string' },
+        notes: { type: ['string', 'null'] },
+      },
+      required: ['kind', 'weeks', 'modality', 'amount', 'currency', 'notes'],
+    } },
     priceFrom: { type: ['number', 'null'] },
     priceCurrency: { type: ['string', 'null'] },
     priceUnit: { type: ['string', 'null'] },
@@ -58,7 +70,7 @@ const analysisJsonSchema = {
   required: [
     'suggestedTitle', 'summary', 'countryCode', 'countryName', 'cities', 'seasonKeys',
     'year', 'shareFrom', 'shareUntil', 'validFrom', 'validUntil', 'minAge', 'maxAge', 'minWeeks', 'maxWeeks', 'priceFrom', 'priceCurrency',
-    'priceUnit', 'priceNotes', 'confidence',
+    'priceUnit', 'priceNotes', 'tariffs', 'confidence',
   ],
 } as const;
 
@@ -86,7 +98,8 @@ export class ResourceDocumentAnalysisService {
         'shareFrom y shareUntil son las fechas explícitas de autorización para compartir/ofertar el folleto o vigencia comercial de sus precios. Nunca uses las fechas del viaje como vigencia comercial. Si no figuran, devuelve null; el administrador las capturará.',
         'minAge y maxAge representan el rango global aceptado por el recurso.',
         'minWeeks y maxWeeks representan el rango global de duración explícito en semanas. Para "2 a 8 semanas" devuelve 2 y 8; para una duración única devuelve el mismo valor en ambos campos. No conviertas días o meses si la equivalencia no es explícita.',
-        'priceFrom es el menor precio base explícito aplicable al programa; no sumes cargos ni conviertas monedas.',
+        'tariffs contiene tarifas explícitas: PACKAGE con weeks para cada paquete por duración y modality (ej. residencial o familia); EXTRA_WEEK con weeks=null para cargos por semana adicional. Cada fila lleva amount, currency y notes. No conviertas un cargo adicional en paquete ni calcules paquetes sumando cargos. Omite filas cuya modalidad, moneda, importe o duración del paquete no estén confirmados. Para MANUAL devuelve []. El administrador revisará todo antes de guardar.',
+        'priceFrom es el menor precio base explícito aplicable al programa. Nunca uses el cargo por semana adicional como precio base desde. No sumes cargos, calcules paquetes ni conviertas monedas.',
         'Si el precio no figura en el PDF, devuelve priceFrom, priceCurrency, priceUnit y priceNotes como null. Si figura solo parte de esta información, conserva lo explícito y devuelve null para lo ausente.',
         'priceCurrency debe ser un código ISO 4217 de tres letras cuando la moneda sea identificable. priceUnit debe ser una etiqueta breve como programa, semana o paquete cuando el PDF la indique.',
         'Extrae los datos de precio explícitos cuando resourceType sea BROCHURE, aunque requestedFamilyKey todavía no esté seleccionada. Para MANUAL devuelve todos los campos de precio en null.',
@@ -139,6 +152,7 @@ export class ResourceDocumentAnalysisService {
       : {
           ...normalized,
           seasonKeys: [],
+          tariffs: [],
           priceFrom: null,
           priceCurrency: null,
           priceUnit: null,

@@ -1,11 +1,12 @@
 import { resourceValidityStatus } from '../../domain/resource-validity.js';
-import { Prisma, QuoteMode, ResourceSourceType } from '@prisma/client';
+import { Prisma, ResourceSourceType } from '@prisma/client';
 import { randomUUID } from 'node:crypto';
 
 import { ConflictAppError, NotFoundAppError, ValidationAppError } from '../../../../shared/domain/errors/app-error.js';
 import { prisma } from '../../../../shared/infrastructure/database/prisma.js';
 import type { ResourceReadRepository } from '../../domain/repositories/resource-read.repository.js';
 import type {
+  ResourceTariff,
   CreateResourceInput,
   CreateResourceVersionInput,
   ResourceAuditIssue,
@@ -36,6 +37,9 @@ const listSelect = {
   validUntil: true,
   minAge: true,
   maxAge: true,
+  minWeeks: true,
+  maxWeeks: true,
+  tariffs: true,
   priceFrom: true,
   priceCurrency: true,
   priceUnit: true,
@@ -196,11 +200,7 @@ function mapCurrentVersion(version: ResourceListRecord['versions'][number] | nul
 
 function mapListResource(resource: ResourceListRecord): ResourceListItem {
   const currentVersion = resource.versions[0] ?? null;
-  const legacyWeekOptions = resource.program?.rule?.weekOptions ?? [];
-  const minWeeks = resource.program?.rule?.minWeeks
-    ?? (legacyWeekOptions.length > 0 ? Math.min(...legacyWeekOptions) : null);
-  const maxWeeks = resource.program?.rule?.maxWeeks
-    ?? (legacyWeekOptions.length > 0 ? Math.max(...legacyWeekOptions) : null);
+  const { minWeeks, maxWeeks } = resource;
   const program = resource.program
     ? {
         id: resource.program.id,
@@ -230,6 +230,7 @@ function mapListResource(resource: ResourceListRecord): ResourceListItem {
     validUntil: resource.validUntil,
     minAge: resource.minAge,
     maxAge: resource.maxAge,
+    tariffs: (resource.tariffs as ResourceTariff[] | null) ?? [],
     priceFrom: resource.priceFrom == null ? null : Number(resource.priceFrom),
     priceCurrency: resource.priceCurrency,
     priceUnit: resource.priceUnit,
@@ -330,6 +331,9 @@ export class ResourceRepository implements ResourceReadRepository {
           validUntil: input.validUntil,
           minAge: input.minAge,
           maxAge: input.maxAge,
+          minWeeks: input.minWeeks,
+          maxWeeks: input.maxWeeks,
+          tariffs: input.tariffs ?? [],
           priceFrom: input.priceFrom,
           priceCurrency: input.priceCurrency,
           priceUnit: input.priceUnit,
@@ -341,11 +345,6 @@ export class ResourceRepository implements ResourceReadRepository {
         select: detailSelect,
       });
 
-      await this.syncProgramWeekRange(tx, {
-        programId: relations.programId,
-        minWeeks: input.minWeeks,
-        maxWeeks: input.maxWeeks,
-      });
 
       return created;
     });
@@ -371,6 +370,7 @@ export class ResourceRepository implements ResourceReadRepository {
           seasonKeys: true,
           active: true,
           shareFrom: true, shareUntil: true, validFrom: true, validUntil: true,
+          minWeeks: true, maxWeeks: true,
           country: { select: { code: true } },
           family: { select: { key: true } },
           program: { select: { slug: true } },
@@ -425,6 +425,10 @@ export class ResourceRepository implements ResourceReadRepository {
         throw new ValidationAppError('Las fechas del viaje deben terminar después de su inicio.');
       }
 
+      if (mergedDates.minWeeks != null && mergedDates.maxWeeks != null && mergedDates.minWeeks > mergedDates.maxWeeks) {
+        throw new ValidationAppError('maxWeeks must be greater than or equal to minWeeks');
+      }
+
       const resource = await tx.resource.update({
         where: { id: input.resourceId },
         data: {
@@ -444,6 +448,9 @@ export class ResourceRepository implements ResourceReadRepository {
           ...(input.validUntil !== undefined ? { validUntil: input.validUntil } : {}),
           ...(input.minAge !== undefined ? { minAge: input.minAge } : {}),
           ...(input.maxAge !== undefined ? { maxAge: input.maxAge } : {}),
+          ...(input.minWeeks !== undefined ? { minWeeks: input.minWeeks } : {}),
+          ...(input.maxWeeks !== undefined ? { maxWeeks: input.maxWeeks } : {}),
+          ...(input.tariffs !== undefined ? { tariffs: input.tariffs ?? [] } : {}),
           ...(input.priceFrom !== undefined ? { priceFrom: input.priceFrom } : {}),
           ...(input.priceCurrency !== undefined ? { priceCurrency: input.priceCurrency } : {}),
           ...(input.priceUnit !== undefined ? { priceUnit: input.priceUnit } : {}),
@@ -462,11 +469,6 @@ export class ResourceRepository implements ResourceReadRepository {
         });
       }
 
-      await this.syncProgramWeekRange(tx, {
-        programId: relations.programId,
-        minWeeks: input.minWeeks,
-        maxWeeks: input.maxWeeks,
-      });
 
       return resource;
     });
@@ -945,47 +947,6 @@ export class ResourceRepository implements ResourceReadRepository {
     if (!input.seasonKeys.length || input.seasonKeys.some((key) => !['SUMMER', 'EASTER', 'WINTER'].includes(key))) {
       throw new ValidationAppError('Selecciona al menos una temporada del folleto: verano, Semana Santa o invierno.');
     }
-  }
-
-  private async syncProgramWeekRange(
-    tx: Prisma.TransactionClient,
-    input: {
-      programId: string | null;
-      minWeeks: number | null | undefined;
-      maxWeeks: number | null | undefined;
-    },
-  ): Promise<void> {
-    if (input.minWeeks === undefined && input.maxWeeks === undefined) {
-      return;
-    }
-
-    if (!input.programId && input.minWeeks == null && input.maxWeeks == null) {
-      return;
-    }
-
-    if (!input.programId) {
-      throw new ValidationAppError('The duration range requires a linked program');
-    }
-
-    if (input.minWeeks != null && input.maxWeeks != null && input.minWeeks > input.maxWeeks) {
-      throw new ValidationAppError('maxWeeks must be greater than or equal to minWeeks');
-    }
-
-    await tx.programRule.upsert({
-      where: { programId: input.programId },
-      create: {
-        programId: input.programId,
-        quoteMode: QuoteMode.WEEK,
-        minWeeks: input.minWeeks ?? null,
-        maxWeeks: input.maxWeeks ?? null,
-        weekOptions: [],
-      },
-      update: {
-        ...(input.minWeeks !== undefined ? { minWeeks: input.minWeeks } : {}),
-        ...(input.maxWeeks !== undefined ? { maxWeeks: input.maxWeeks } : {}),
-        weekOptions: [],
-      },
-    });
   }
 
   private extractSeasonKeys(values: string[]): string[] {

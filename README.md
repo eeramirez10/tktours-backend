@@ -194,6 +194,8 @@ El schema actual incluye entidades como:
 - `GET /api/resources`
 - `GET /api/resources/:resourceId`
 - `POST /api/resources`
+- `POST /api/resources/analyze` (PDF nuevo, multipart)
+- `POST /api/resources/:resourceId/analyze` (vuelve a analizar el PDF guardado, sin crear versión)
 - `PATCH /api/resources/:resourceId`
 - `PATCH /api/resources/:resourceId/active`
 - `POST /api/resources/:resourceId/versions`
@@ -360,6 +362,25 @@ Los resources pueden ser:
 
 - archivo subido
 - link externo
+
+## Datos confirmados del recurso
+
+El concierge consulta los campos guardados del formulario. `search_resource_content` conserva su nombre por compatibilidad, pero devuelve esos campos; no consulta fragmentos ni reinterpreta PDFs durante el chat. El análisis con IA devuelve sugerencias que el administrador revisa antes de guardar. El botón **Analizar otra vez con IA** permite analizar el PDF actual sin volver a cargarlo.
+
+Cada recurso conserva `minWeeks`, `maxWeeks` y `tariffs`. Los campos vacíos quedan sin confirmar; no heredan semanas de `ProgramRule`. Cada tarifa contiene `kind` (`PACKAGE` o `EXTRA_WEEK`), `weeks` (duración del paquete; null para semana adicional), `modality`, `amount`, `currency` y `notes`. Un paquete tiene precio propio: no se calcula sumando semanas adicionales a `priceFrom`. Las APIs JSON reciben una lista; el upload multipart recibe `tariffs` como JSON.
+
+`validFrom`/`validUntil` son fechas del viaje; `shareFrom`/`shareUntil` autorizan la publicación. Se valida el mes solicitado aun sin año. El envío se reserva en `InquiryResourceSend` por solicitud y versión mediante una clave única; un cambio de mes o un reinicio no reenvía el archivo. Solo otra petición explícita o un fallo comprobado habilita un reintento. Un resultado de transporte desconocido permanece bloqueado para evitar duplicados.
+
+La migración `20261109000000_resource_confirmed_facts` agrega campos sin copiar duraciones compartidas ni modificar conversaciones, contactos o archivos. Corrige solamente el inicio de publicación de CAD BLI 2027. Antes de publicar, aplica la migración con `prisma migrate deploy`, despliega el backend y después el panel. Los folletos existentes requieren confirmar su duración y tarifas en Recursos.
+
+Verificación local del backend:
+
+```sh
+pnpm build
+NODE_ENV=test node --env-file=.env.development --import tsx --test 'src/**/*.test.ts'
+```
+
+La integración `src/scripts/verifyResourceSourceOfTruth.ts` está restringida a PostgreSQL local con una base desechable llamada `resources_test`. Aplica primero las migraciones anteriores a `20261109000000_resource_confirmed_facts`, carga `src/scripts/fixtures/resource-source-of-truth-before-migration.sql`, aplica la migración nueva y ejecuta el script con `DATABASE_URL` apuntando a esa base. Comprueba conservación de datos, duración independiente, Montreal/Quebec, enero sin año y envíos concurrentes con reintentos controlados. No utiliza ni modifica datos reales.
 
 ## Decisiones importantes del proyecto
 

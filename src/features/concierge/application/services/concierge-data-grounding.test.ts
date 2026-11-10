@@ -56,7 +56,7 @@ test('destination overview filters by family and includes resource summaries', a
   assert.deepEqual(result.destinations[0]?.cities, ['Zúrich']);
   assert.equal(result.destinations[0]?.brochureCount, 1);
   assert.deepEqual(result.destinations[0]?.programs[0]?.seasonKeys, ['SUMMER']);
-  assert.equal(result.destinations[0]?.resources[0]?.summary, 'Actividades y alojamiento');
+  assert.equal(result.destinations[0]?.resources[0]?.summary, 'Campamento en Zúrich');
   assert.equal(result.destinations[0]?.resources[0]?.priceFrom, 1200);
   assert.equal(filters.every((args) => (args as { familyKey?: string }).familyKey === 'CAMP'), true);
 });
@@ -305,6 +305,7 @@ test('an intermediate customer question keeps the answer instead of forcing the 
       trace: { details?: Record<string, unknown> };
     }>;
   };
+  Object.assign(orchestrator, { applyCityResourceFlow: async () => null });
   orchestrator.toolExecutor = {
     execute: async (name) => name === 'detect_user_intent'
       ? { intent: 'ASK_AVAILABLE_PROGRAMS' }
@@ -366,4 +367,28 @@ test('an intermediate customer question keeps the answer instead of forcing the 
   });
   assert.equal(grounded.structured.replyText, 'El folleto confirma alojamiento.');
   assert.deepEqual(queriedTools.slice(-2), ['list_destination_overview', 'search_resource_content']);
+});
+
+test('extra-week and package answers preserve registered duration and modality without arithmetic', async () => {
+  const orchestrator = Object.create(ConciergeOrchestratorService.prototype) as {
+    toolExecutor: { execute: (name: string, args: unknown) => Promise<unknown> };
+    buildConfirmedTariffAnswer: (context: unknown) => Promise<string>;
+  };
+  orchestrator.toolExecutor = { execute: async () => ({ matches: [{ resourceTitle: 'BLI', tariffs: [
+    { kind: 'PACKAGE', weeks: 2, modality: 'Residencia', amount: 2800, currency: 'CAD' },
+    { kind: 'PACKAGE', weeks: 3, modality: 'Residencia', amount: 4000, currency: 'CAD' },
+    { kind: 'EXTRA_WEEK', weeks: null, modality: 'Residencia', amount: 900, currency: 'CAD' },
+    { kind: 'EXTRA_WEEK', weeks: null, modality: 'Familia', amount: 700, currency: 'CAD' },
+  ] }] }) };
+  const context = (text: string) => ({ activeInquiry: { id: 'inquiry' }, latestMessage: { text } });
+  const extra = await orchestrator.buildConfirmedTariffAnswer(context('¿Cuánto cuesta una semana adicional?'));
+  assert.match(extra, /900 CAD por semana adicional, modalidad Residencia/);
+  assert.match(extra, /700 CAD por semana adicional, modalidad Familia/);
+  assert.doesNotMatch(extra, /3 semanas|3,700|4,000|2,800/);
+  const three = await orchestrator.buildConfirmedTariffAnswer(context('¿Cuál es el precio del paquete de tres semanas?'));
+  assert.match(three, /4,000 CAD por el paquete de 3 semanas/);
+  assert.doesNotMatch(three, /3,700|900|2,800/);
+  const absent = await orchestrator.buildConfirmedTariffAnswer(context('Precio del paquete de 4 semanas'));
+  assert.match(absent, /No tengo una tarifa confirmada/);
+  assert.doesNotMatch(absent, /4,900|4,000|900/);
 });

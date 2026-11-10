@@ -1,3 +1,5 @@
+import { ValidationAppError } from '../../../../shared/domain/errors/app-error.js';
+import { ResourceSendHistoryService } from '../../../resources/application/services/resource-send-history.service.js';
 import { ResourceDeliveryGuardService } from '../../../resources/application/services/resource-delivery-guard.service.js';
 import { Prisma } from '@prisma/client';
 import { z } from 'zod';
@@ -205,17 +207,40 @@ export class MetaWhatsAppInboundService {
         data: { text: replyText, mediaUrl: mediaUrls[0] ?? null },
       });
     }
-    const textResult = await this.whatsAppClient.sendMessage({ to: waId, body: replyText });
+    const deliveries = outboundMessage?.metadata?.resourceDeliveries;
+    let textResult;
+    try {
+      textResult = await this.whatsAppClient.sendMessage({ to: waId, body: replyText });
+    } catch (error) {
+      // The document requests have not started, regardless of the text request's outcome.
+      if (Array.isArray(deliveries)) await Promise.all(deliveries.map(async (delivery: { sendId?: string }) => {
+        if (typeof delivery.sendId === 'string') await new ResourceSendHistoryService().recordTransportResult(delivery.sendId, 'FAILED_TO_REQUEST', null);
+      }));
+      throw error;
+    }
     const mediaResults = await Promise.all(
       mediaUrls.map(async (mediaUrl) => {
         try {
           return await this.whatsAppClient.sendMessage({ to: waId, mediaUrl });
         } catch (error) {
           logger.error({ error, mediaUrl, messageId: outboundMessage?.id }, 'meta whatsapp document request failed');
-          return { messageId: null, status: 'FAILED_TO_REQUEST' };
+          const rejected = error instanceof ValidationAppError
+            && typeof (error.details as { status?: unknown } | undefined)?.status === 'number';
+          return { messageId: null, status: rejected ? 'FAILED_TO_REQUEST' : 'UNKNOWN' };
         }
       }),
     );
+
+    if (Array.isArray(deliveries)) {
+      await Promise.all(deliveries.map(async (delivery: { sendId?: string; url?: string }) => {
+        if (typeof delivery.sendId !== 'string') return;
+        const index = mediaUrls.indexOf(delivery.url ?? '');
+        const result = mediaResults[index];
+        await new ResourceSendHistoryService().recordTransportResult(
+          delivery.sendId, result?.status ?? 'FAILED_TO_REQUEST', result?.messageId ?? null,
+        );
+      }));
+    }
 
     if (!outboundMessage || !textResult.messageId) {
       return;

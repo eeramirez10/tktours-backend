@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import test from 'node:test';
+import test, { beforeEach, afterEach } from 'node:test';
 import { selectedCity } from '../../domain/city-selection.js';
 import { ConciergeCityResourcesService } from './concierge-city-resources.service.js';
 import { ConciergeOrchestratorService } from './concierge-orchestrator.service.js';
@@ -7,10 +7,25 @@ import { ConciergeToolExecutorService } from './concierge-tool-executor.service.
 import { ResourceDeliveryGuardService } from '../../../resources/application/services/resource-delivery-guard.service.js';
 import { prisma } from '../../../../shared/infrastructure/database/prisma.js';
 
+let sends: Array<{ id: string; resourceId: string; resourceVersionId: string; deliveryStatus: string }> = [];
+const originalSends = { findMany: prisma.inquiryResourceSend.findMany, findFirst: prisma.inquiryResourceSend.findFirst, createMany: prisma.inquiryResourceSend.createMany };
+afterEach(() => { Object.assign(prisma.inquiryResourceSend, originalSends); });
+beforeEach(() => {
+  sends = [];
+  prisma.inquiryResourceSend.findMany = (async () => sends) as never;
+  prisma.inquiryResourceSend.findFirst = (async () => sends[0] ?? null) as never;
+  prisma.inquiryResourceSend.createMany = (async ({ data }: { data: Record<string, unknown> }) => {
+    const send = { id: `send-${sends.length}`, ...data };
+    sends.unshift(send as typeof sends[number]);
+    return { count: 1 };
+  }) as never;
+});
+
 const cities = [{ slug: 'ca-montreal', name: 'Montreal' }, { slug: 'ca-quebec', name: 'Québec' }];
 const brochure = (familyKey = 'CAMP') => ({ id: 'resource', countryCode: 'CA', familyKey, title: 'Canadá 2027',
   locationSlugs: cities.map((city) => city.slug), locationNames: cities.map((city) => city.name),
   locationSlug: 'ca-montreal', locationName: 'Montreal, Québec', year: 2027, seasonKeys: ['SUMMER'],
+  validFrom: '2027-07-04', validUntil: '2027-08-08', minWeeks: 2, maxWeeks: 4,
   priceFrom: 1200, priceCurrency: 'CAD', currentVersion: { id: 'version', fileName: 'camp.pdf', fileUrl: 'https://example.com/camp.pdf' } });
 const inquiry = (familyKey = 'CAMP') => ({ id: 'inquiry', family: { key: familyKey }, country: { code: 'CA', name: 'Canadá' },
   studentAge: 16, qualificationJson: { residenceCountry: 'México' }, preferredStartMonth: 7, preferredStartYear: null,
@@ -79,6 +94,7 @@ for (const familyKey of ['CAMP', 'LANGUAGE_COURSE']) {
     assert.equal(calls.find((call) => call.name === 'list_available_resources')?.args.locationSlug, 'ca-quebec');
     assert.equal(calls.find((call) => call.name === 'list_available_resources')?.args.targetDate, undefined);
     if (familyKey === 'CAMP') assert.match(result!.structured.replyText, /desde 1,200 CAD/);
+    sends.push({ id: 'stored', resourceId: 'resource', resourceVersionId: 'version', deliveryStatus: 'ACCEPTED' });
     const repeated = await service.applyCityResourceFlow(parsed, { ...context, cityWasSelected: false,
       conversation: { contextJson: result!.contextPatch }, latestMessage: { text: '4 semanas' } });
     assert.equal(repeated, null);
@@ -154,7 +170,8 @@ test('a stricter age filter after delivery does not reopen the old brochure-perm
     findCampBrochureCandidates: () => Promise<unknown[]>;
     resolveCampBrochureState: (context: unknown) => Promise<{ state: { status: string } }>;
   };
-  orchestrator.findCampBrochureCandidates = async () => [{ versionId: 'version', seasonKeys: ['SUMMER'] }];
+  orchestrator.findCampBrochureCandidates = async () => [{ resourceId: 'resource', versionId: 'version', seasonKeys: ['SUMMER'] }];
+  sends.push({ id: 'stored', resourceId: 'resource', resourceVersionId: 'version', deliveryStatus: 'ACCEPTED' });
   const result = await orchestrator.resolveCampBrochureState({ activeInquiry: { ...inquiry(), location: cities[0] },
     conversation: { contextJson: { ...first!.contextPatch, campBrochure: { status: 'SENT', candidates: [], checkedAt: new Date().toISOString() } } } });
   assert.equal(result.state.status, 'SENT');
@@ -210,3 +227,66 @@ for (const eligible of [true, false]) {
     }
   });
 }
+
+const montrealOnly = () => ({ ...brochure(), id: 'res-2', title: 'Montreal residencial',
+  locationSlug: 'ca-montreal', locationSlugs: ['ca-montreal'], locationNames: ['Montreal'],
+  minWeeks: 3, maxWeeks: 6,
+  currentVersion: { id: 'v2', fileName: 'residence.pdf', fileUrl: 'https://example.com/residence.pdf' } });
+
+test('Montreal receives both distinct PDFs and Quebec receives only the assigned BLI PDF', async () => {
+  const { service } = harness([brochure(), montrealOnly(), brochure()]);
+  for (const [city, count] of [[cities[0], 2], [cities[1], 1]] as const) {
+    const result = await service.applyCityResourceFlow(parsed, { activeInquiry: { ...inquiry(), location: city }, cityWasSelected: true });
+    assert.equal(result!.outboundMediaUrls.length, count);
+    assert.match(result!.structured.replyText, /viaje del 2027-07-04 al 2027-08-08/);
+    assert.match(result!.structured.replyText, /2 a 4 semanas/);
+    if (count === 2) assert.match(result!.structured.replyText, /3 a 6 semanas/);
+  }
+});
+
+test('January without a year shows actual trip dates; changing to July after restart does not resend', async () => {
+  sends.push({ id: 'stored', resourceId: 'resource', resourceVersionId: 'version', deliveryStatus: 'UNKNOWN' });
+  const january = await harness().service.applyCityResourceFlow(parsed, {
+    activeInquiry: { ...inquiry(), preferredStartMonth: 1, location: cities[0] }, latestMessage: { text: 'enero' },
+    conversation: { contextJson: null },
+  });
+  assert.deepEqual(january!.outboundMediaUrls, []);
+  assert.match(january!.structured.replyText, /Para enero no tengo fechas de viaje confirmadas/);
+  assert.match(january!.structured.replyText, /2027-07-04/);
+  assert.match(january!.structured.replyText, /mantener enero/);
+  const restarted = harness().service;
+  const july = await restarted.applyCityResourceFlow(parsed, {
+    activeInquiry: { ...inquiry(), preferredStartMonth: 7, location: cities[0] }, latestMessage: { text: 'julio' }, conversation: { contextJson: null },
+  });
+  assert.equal(july, null);
+});
+
+test('keeping January preserves the preference for advisor follow-up', async () => {
+  const result = await harness().service.applyCityResourceFlow(parsed, {
+    activeInquiry: { ...inquiry(), preferredStartMonth: 1, location: cities[0] }, latestMessage: { text: 'Prefiero mantener enero' },
+  });
+  assert.equal(result!.structured.nextStage, 'ESCALATED');
+  assert.match(result!.structured.replyText, /preferencia por enero/);
+  assert.deepEqual(result!.outboundMediaUrls, []);
+});
+
+test('an explicit request or proven failure can resend a PDF; a city change alone cannot', async () => {
+  sends.push({ id: 'stored', resourceId: 'resource', resourceVersionId: 'version', deliveryStatus: 'ACCEPTED' });
+  const { service } = harness();
+  const context = { activeInquiry: { ...inquiry(), location: cities[0] }, conversation: {} };
+  assert.equal(await service.applyCityResourceFlow(parsed, { ...context, cityWasSelected: true }), null);
+  const requested = await service.applyCityResourceFlow(parsed, { ...context, latestMessage: { text: 'Envíame el folleto otra vez' } });
+  assert.equal(requested!.outboundMediaUrls.length, 1);
+  sends[0]!.deliveryStatus = 'FAILED';
+  const failed = await service.applyCityResourceFlow(parsed, { ...context, latestMessage: { text: 'julio' } });
+  assert.equal(failed!.outboundMediaUrls.length, 1);
+});
+
+test('a January availability question validates the requested month even when classified as an answer', async () => {
+  const result = await harness().service.applyCityResourceFlow({ ...parsed, replyIntent: 'ANSWER_QUESTION' }, {
+    activeInquiry: { ...inquiry(), preferredStartMonth: 1, location: cities[0] },
+    latestMessage: { text: '¿Tienen campamento en enero?' }, travelDateWasSelected: true,
+  });
+  assert.match(result!.structured.replyText, /Para enero no tengo fechas de viaje confirmadas/);
+  assert.deepEqual(result!.outboundMediaUrls, []);
+});

@@ -20,6 +20,7 @@ resourcesRoutes.get('/resources/:resourceId', (req, res, next) => resourcesContr
 resourcesRoutes.post('/resources', (req, res, next) => resourcesController.createResource(req, res, next));
 resourcesRoutes.patch('/resources/:resourceId', (req, res, next) => resourcesController.updateResource(req, res, next));
 resourcesRoutes.patch('/resources/:resourceId/active', (req, res, next) => resourcesController.setActive(req, res, next));
+resourcesRoutes.post('/resources/:resourceId/analyze', (req, res, next) => resourcesController.analyzeStoredDocument(req, res, next));
 resourcesRoutes.post('/resources/:resourceId/versions/upload', uploadResourcePdf, (req, res, next) =>
   resourcesController.uploadVersion(req, res, next),
 );

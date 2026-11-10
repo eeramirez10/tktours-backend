@@ -101,3 +101,14 @@ test('missing or ambiguous seasons are not inferred from dates or the country', 
   const unknown = createService({ ...analysis, seasonKeys: ['CUSTOM'] });
   await assert.rejects(unknown.analyze(input), /invalid shape/);
 });
+
+test('document analysis proposes separate packages and extra-week tariffs for administrator review', async () => {
+  const tariffs = [
+    { kind: 'PACKAGE', weeks: 3, modality: 'Residencia', amount: 4000, currency: 'CAD', notes: null },
+    { kind: 'EXTRA_WEEK', weeks: null, modality: 'Familia', amount: 700, currency: 'CAD', notes: null },
+  ];
+  const service = createService({ ...analysis, tariffs });
+  const result = await service.analyze(input);
+  assert.deepEqual(result.tariffs, tariffs);
+  assert.deepEqual((await service.analyze({ ...input, resourceType: 'MANUAL' })).tariffs, []);
+});

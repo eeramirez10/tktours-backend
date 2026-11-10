@@ -21,6 +21,8 @@ export class RefreshInquiryRecommendationsUseCase {
     const recommendations = await this.catalogRepository.findRecommendedPrograms({
       countryCode: inquiry.country.code,
       familyKey: (inquiry.family?.key as 'CAMP' | 'LANGUAGE_COURSE' | 'SCHOOL_PROGRAM' | undefined) ?? undefined,
+      locationSlug: inquiry.location?.slug,
+      preferredStartYear: inquiry.preferredStartYear ?? undefined,
       studentAge: inquiry.studentAge ?? undefined,
       accommodationKey:
         (inquiry.accommodationType?.key as 'HOST_FAMILY' | 'UNIVERSITY_RESIDENCE' | 'SHARED_APARTMENT' | undefined) ?? undefined,

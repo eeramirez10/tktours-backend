@@ -1,3 +1,4 @@
+import { resourceTripCompatibility } from '../../../resources/domain/resource-trip-compatibility.js';
 import { Prisma } from '@prisma/client';
 
 import { ConflictAppError, NotFoundAppError } from '../../../../shared/domain/errors/app-error.js';
@@ -134,6 +135,7 @@ const programSelect = {
       shareUntil: true,
       validFrom: true,
       validUntil: true,
+      minWeeks: true, maxWeeks: true, minAge: true, maxAge: true,
       family: { select: { key: true, active: true } },
       country: { select: { active: true } },
       versions: {
@@ -172,6 +174,8 @@ function mapResources(resources: ProgramRecord['resources']): CatalogResourceSum
     seasonKeys: resource.family?.key === 'CAMP' && resource.type === 'BROCHURE'
       ? resource.seasonKeys.filter((key): key is CatalogCampSeasonKey => key === 'SUMMER' || key === 'EASTER' || key === 'WINTER')
       : [],
+    minWeeks: resource.minWeeks ?? null, maxWeeks: resource.maxWeeks ?? null,
+    minAge: resource.minAge ?? null, maxAge: resource.maxAge ?? null,
     validFrom: resource.validFrom?.toISOString().slice(0, 10) ?? null,
     validUntil: resource.validUntil?.toISOString().slice(0, 10) ?? null,
   }));
@@ -662,26 +666,20 @@ export class CatalogRepository implements CatalogReadRepository {
     query: CatalogProgramRecommendationQuery,
   ): CatalogProgramRecommendation | null {
     const reasons: string[] = [];
-    if (program.family.key === 'CAMP' && program.seasonKeys.length === 0) return null;
-
-    if (query.studentAge != null) {
-      if (program.minAge != null && query.studentAge < program.minAge) {
-        return null;
-      }
-      if (program.maxAge != null && query.studentAge > program.maxAge) {
-        return null;
-      }
-      reasons.push(`age ${query.studentAge} fits program range`);
-    }
-
+    const compatibleBrochures = program.resources.filter((resource) => resource.type === 'BROCHURE'
+      && (query.studentAge == null || ((resource.minAge ?? program.minAge) == null || query.studentAge >= (resource.minAge ?? program.minAge)!)
+        && ((resource.maxAge ?? program.maxAge) == null || query.studentAge <= (resource.maxAge ?? program.maxAge)!))
+      && (query.weeks == null || resource.minWeeks != null && resource.maxWeeks != null
+        && query.weeks >= resource.minWeeks && query.weeks <= resource.maxWeeks)
+      && (query.preferredStartMonth == null || resourceTripCompatibility(resource, query.preferredStartMonth, query.preferredStartYear) === 'CONFIRMED'));
+    if (program.family.key === 'CAMP') {
+      if (program.seasonKeys.length === 0 || !compatibleBrochures.length) return null;
+    } else if (query.studentAge != null && ((program.minAge != null && query.studentAge < program.minAge)
+      || (program.maxAge != null && query.studentAge > program.maxAge))) return null;
+    if (query.studentAge != null) reasons.push(`age ${query.studentAge} fits confirmed range`);
     if (query.weeks != null) {
-      if (program.minWeeks != null && query.weeks < program.minWeeks) {
-        return null;
-      }
-      if (program.maxWeeks != null && query.weeks > program.maxWeeks) {
-        return null;
-      }
-      reasons.push(`stay length ${query.weeks} weeks is allowed`);
+      if (!compatibleBrochures.length) return null;
+      reasons.push(`stay length ${query.weeks} weeks is confirmed by a brochure`);
     }
 
     if (query.accommodationKey) {
@@ -703,14 +701,7 @@ export class CatalogRepository implements CatalogReadRepository {
     if (query.preferredStartMonth != null) {
       const preferredStartMonth = query.preferredStartMonth;
       const hasMonthMatch = program.family.key === 'CAMP'
-        ? program.resources.some((resource) => {
-          if (resource.type !== 'BROCHURE' || resource.seasonKeys.length === 0) return false;
-          const year = resource.year ?? resourceBusinessDate().getUTCFullYear();
-          const monthStart = new Date(Date.UTC(year, preferredStartMonth - 1, 1)).toISOString().slice(0, 10);
-          const monthEnd = new Date(Date.UTC(year, preferredStartMonth, 0)).toISOString().slice(0, 10);
-          return (!resource.validFrom || resource.validFrom <= monthEnd)
-            && (!resource.validUntil || resource.validUntil >= monthStart);
-        })
+        ? compatibleBrochures.length > 0
         : program.startWindows.some((window) => {
           if (window.startsEveryMonday) {
             return true;

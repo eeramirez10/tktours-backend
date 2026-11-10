@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { optionalResourceSeasonsSchema } from './resource-season.schemas.js';
 
 import {
+  optionalResourceTariffsSchema,
   optionalNullableCurrencySchema,
   optionalNullableDateSchema,
   optionalNullableIntSchema,
@@ -64,6 +65,7 @@ export const updateResourceBodySchema = z
     validUntil: optionalNullableDateSchema,
     minAge: optionalNullableIntSchema(0, 120),
     maxAge: optionalNullableIntSchema(0, 120),
+    tariffs: optionalResourceTariffsSchema,
     priceFrom: optionalNullableMoneySchema,
     priceCurrency: optionalNullableCurrencySchema,
     priceUnit: optionalNullableShortStringSchema(40),

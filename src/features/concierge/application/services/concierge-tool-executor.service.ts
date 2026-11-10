@@ -1,3 +1,5 @@
+import { resourceTripCompatibility } from '../../../resources/domain/resource-trip-compatibility.js';
+import type { ResourceTariff } from '../../../resources/domain/types/resource.types.js';
 import { resourceEligibilityFilters, resourceValidityStatus } from '../../../resources/domain/resource-validity.js';
 import { access } from 'node:fs/promises';
 import { Prisma } from '@prisma/client';
@@ -147,7 +149,7 @@ export class ConciergeToolExecutorService {
 
   private async findMatchingPrograms(args: FindMatchingProgramsArgs) {
     const programs = await this.catalogRepository.findRecommendedPrograms(args);
-    return programs.map((program) => program.family.key === 'CAMP' ? { ...program, prices: [] } : program);
+    return programs.map((program) => ({ ...program, description: null, minWeeks: null, maxWeeks: null, weekOptions: [], prices: program.family.key === 'CAMP' ? [] : program.prices }));
   }
 
   private async getContactInfo(args: GetContactInfoArgs) {
@@ -478,7 +480,7 @@ export class ConciergeToolExecutorService {
 
   private async getProgramDetail(args: GetProgramDetailArgs) {
     const program = await this.catalogRepository.findProgramBySlug(args.slug);
-    return program?.family.key === 'CAMP' ? { ...program, prices: [] } : program;
+    return program ? { ...program, description: null, minWeeks: null, maxWeeks: null, weekOptions: [], prices: program.family.key === 'CAMP' ? [] : program.prices } : null;
   }
 
   private async listAvailableCountries(args: ListAvailableCountriesArgs) {
@@ -527,6 +529,8 @@ export class ConciergeToolExecutorService {
         countryCode: args.countryCode,
         studentAge: args.studentAge,
         targetDate: args.targetDate,
+        targetMonth: args.targetMonth,
+        targetYear: args.targetYear,
       }),
     ]);
 
@@ -558,11 +562,11 @@ export class ConciergeToolExecutorService {
             slug: program.slug,
             name: program.name,
             familyKey: program.family.key,
-            description: program.description,
+            description: null,
             minAge: program.minAge,
             maxAge: program.maxAge,
-            minWeeks: program.minWeeks,
-            maxWeeks: program.maxWeeks,
+            minWeeks: null,
+            maxWeeks: null,
             seasonKeys: [...new Set(countryResources.filter((resource) => resource.programSlug === program.slug)
               .flatMap((resource) => resource.seasonKeys))],
           })),
@@ -575,7 +579,7 @@ export class ConciergeToolExecutorService {
             seasonKeys: resource.seasonKeys,
             cities: resource.locationNames,
             description: resource.description,
-            summary: resource.currentVersion?.summary?.slice(0, args.countryCode ? 700 : 180) ?? null,
+            summary: resource.description?.slice(0, args.countryCode ? 700 : 180) ?? null,
             minAge: resource.minAge,
             maxAge: resource.maxAge,
             minWeeks: resource.minWeeks,
@@ -588,6 +592,7 @@ export class ConciergeToolExecutorService {
             priceFrom: resource.priceFrom,
             priceCurrency: resource.priceCurrency,
             priceUnit: resource.priceUnit,
+            tariffs: resource.tariffs,
           })),
         };
       })
@@ -617,8 +622,8 @@ export class ConciergeToolExecutorService {
         venueName: program.location?.venueName ?? null,
         minAge: program.minAge,
         maxAge: program.maxAge,
-        minWeeks: program.minWeeks,
-        maxWeeks: program.maxWeeks,
+        minWeeks: null,
+        maxWeeks: null,
         prices: program.family.key === 'CAMP' ? [] : program.prices,
         seasonKeys: program.seasonKeys,
       })),
@@ -724,6 +729,9 @@ export class ConciergeToolExecutorService {
         validUntil: true,
         minAge: true,
         maxAge: true,
+        minWeeks: true,
+        maxWeeks: true,
+        tariffs: true,
         priceFrom: true,
         priceCurrency: true,
         priceUnit: true,
@@ -777,6 +785,7 @@ export class ConciergeToolExecutorService {
       await Promise.all(
         resources.map(async (resource) => {
           if (resourceValidityStatus(resource) !== 'CURRENT') return null;
+          if (resourceTripCompatibility(resource, args.targetMonth, args.targetYear) === 'INCOMPATIBLE') return null;
           if (resource.family?.key === 'CAMP' && resource.type === 'BROCHURE' && !(resource.seasonKeys ?? []).some((key) => ['SUMMER', 'EASTER', 'WINTER'].includes(key))) return null;
           const version = resource.versions[0];
           if (!version) return null;
@@ -812,6 +821,7 @@ export class ConciergeToolExecutorService {
         validUntil: resource.validUntil?.toISOString().slice(0, 10) ?? null,
         minAge: resource.minAge ?? resource.program?.minAge ?? null,
         maxAge: resource.maxAge ?? resource.program?.maxAge ?? null,
+        tariffs: (resource.tariffs as ResourceTariff[] | null) ?? [],
         priceFrom: resource.priceFrom != null && resource.priceCurrency ? Number(resource.priceFrom) : null,
         priceCurrency: resource.priceFrom != null && resource.priceCurrency ? resource.priceCurrency : null,
         priceUnit: resource.priceFrom != null && resource.priceCurrency ? resource.priceUnit : null,
@@ -827,10 +837,8 @@ export class ConciergeToolExecutorService {
         venueName: resource.location?.venueName ?? resource.locationAssignments[0]?.location.venueName ?? null,
         programSlug: resource.program?.slug ?? null,
         programName: resource.program?.name ?? null,
-        minWeeks: resource.program?.rule?.minWeeks
-          ?? (resource.program?.rule?.weekOptions.length ? Math.min(...resource.program.rule.weekOptions) : null),
-        maxWeeks: resource.program?.rule?.maxWeeks
-          ?? (resource.program?.rule?.weekOptions.length ? Math.max(...resource.program.rule.weekOptions) : null),
+        minWeeks: resource.minWeeks,
+        maxWeeks: resource.maxWeeks,
         currentVersion: resource.versions[0]
           ? {
               id: resource.versions[0].id,
@@ -840,7 +848,7 @@ export class ConciergeToolExecutorService {
                 : resource.versions[0].fileUrl,
               mimeType: resource.versions[0].mimeType,
               extractionStatus: resource.versions[0].extraction?.status ?? null,
-              summary: resource.versions[0].extraction?.summary ?? null,
+              summary: resource.description,
             }
           : null,
       })),
@@ -899,137 +907,58 @@ export class ConciergeToolExecutorService {
       return { matches: [], reason: 'the inquiry does not identify a destination or previously sent resource' };
     }
 
-    const targetDate = inquiry.preferredStartMonth && inquiry.preferredStartYear
-      ? new Date(Date.UTC(inquiry.preferredStartYear, inquiry.preferredStartMonth - 1, 1))
-      : null;
-    const resourceFilters: Prisma.ResourceWhereInput[] = resourceEligibilityFilters(targetDate);
-
-    if (inquiry.studentAge != null) {
-      resourceFilters.push(...this.resourceAgeCompatibilityFilters(inquiry.studentAge));
-    }
-
+    const resourceFilters: Prisma.ResourceWhereInput[] = resourceEligibilityFilters();
+    if (inquiry.studentAge != null) resourceFilters.push(...this.resourceAgeCompatibilityFilters(inquiry.studentAge));
     const sentResourceIds = inquiry.resourceSends.map((send) => send.resourceId);
-    const resourceWhere: Prisma.ResourceWhereInput = {
-      active: true,
-      ...(resourceId
-        ? { id: resourceId }
-        : !inquiry.countryId
-          ? { id: { in: sentResourceIds } }
-          : {}),
-      ...(inquiry.countryId ? { countryId: inquiry.countryId } : {}),
-      ...(inquiry.familyId ? { familyId: inquiry.familyId } : {}),
-      ...(inquiry.programId ? { programId: inquiry.programId } : {}),
-      ...(inquiry.locationId
-        ? { OR: [
-            { locationAssignments: { some: { locationId: inquiry.locationId } } },
-            { locationId: inquiry.locationId },
-          ] }
-        : {}),
-      ...(resourceFilters.length > 0 ? { AND: resourceFilters } : {}),
-    };
-    const terms = this.extractResourceSearchTerms(query);
-
-    const chunks = await prisma.resourceChunk.findMany({
+    const resources = await prisma.resource.findMany({
       where: {
-        extraction: {
-          status: 'DONE',
-          resourceVersion: {
-            isCurrent: true,
-            resource: resourceWhere,
-          },
-        },
-        OR: terms.map((term) => ({ content: { contains: term, mode: 'insensitive' as const } })),
+        ...(resourceId ? { id: resourceId } : !inquiry.countryId ? { id: { in: sentResourceIds } } : {}),
+        ...(inquiry.countryId ? { countryId: inquiry.countryId } : {}),
+        ...(inquiry.familyId ? { familyId: inquiry.familyId } : {}),
+        ...(inquiry.programId ? { programId: inquiry.programId } : {}),
+        ...(inquiry.locationId ? { OR: [
+          { locationId: inquiry.locationId },
+          { locationAssignments: { some: { locationId: inquiry.locationId } } },
+        ] } : {}),
+        AND: resourceFilters,
       },
       select: {
-        chunkIndex: true,
-        content: true,
-        extraction: {
-          select: {
-            resourceVersion: {
-              select: {
-                resource: {
-                  select: {
-                    id: true,
-                    title: true,
-                    description: true,
-                    country: { select: { code: true, name: true } },
-                    program: { select: { slug: true, name: true } },
-                  },
-                },
-              },
-            },
-          },
-        },
+        id: true, title: true, description: true, year: true, seasonKeys: true,
+        active: true, type: true, shareFrom: true, shareUntil: true,
+        validFrom: true, validUntil: true, minWeeks: true, maxWeeks: true,
+        minAge: true, maxAge: true, tariffs: true,
+        priceFrom: true, priceCurrency: true, priceUnit: true, priceNotes: true,
+        country: { select: { code: true, name: true } },
+        family: { select: { key: true } },
+        program: { select: { slug: true, name: true } },
+        location: { select: { name: true } },
+        locationAssignments: { select: { location: { select: { name: true } } } },
       },
-      take: 60,
+      orderBy: { title: 'asc' },
     });
-
-    const sentResourceIdSet = new Set(sentResourceIds);
-    const matches = chunks
-      .map((chunk) => {
-        const resource = chunk.extraction.resourceVersion.resource;
-        const normalizedContent = this.normalizeSearchText(chunk.content);
-        const normalizedTitle = this.normalizeSearchText(resource.title);
-        const lexicalScore = terms.reduce((score, term) => {
-          const normalizedTerm = this.normalizeSearchText(term);
-          return score
-            + (normalizedContent.includes(normalizedTerm) ? 2 : 0)
-            + (normalizedTitle.includes(normalizedTerm) ? 3 : 0);
-        }, 0);
-
-        return {
-          resourceId: resource.id,
-          resourceTitle: resource.title,
-          countryCode: resource.country.code,
-          countryName: resource.country.name,
-          programSlug: resource.program?.slug ?? null,
-          programName: resource.program?.name ?? null,
-          description: resource.description,
-          chunkIndex: chunk.chunkIndex,
-          excerpt: this.compactResourceExcerpt(chunk.content),
-          wasSentToCustomer: sentResourceIdSet.has(resource.id),
-          score: lexicalScore + (sentResourceIdSet.has(resource.id) ? 5 : 0),
-        };
-      })
-      .sort((left, right) => right.score - left.score || left.chunkIndex - right.chunkIndex)
-      .slice(0, limit);
-
     return {
       query,
-      matches,
-      answerPolicy: matches.length > 0
-        ? 'Answer in Spanish using only these excerpts. Paraphrase and do not claim details absent from them.'
-        : 'Do not invent an answer. Say the brochure does not confirm that detail and offer advisor follow-up.',
+      source: 'CONFIRMED_RESOURCE_FORM',
+      matches: resources.filter((resource) => resourceValidityStatus(resource) === 'CURRENT')
+        .sort((a, b) => Number(sentResourceIds.includes(b.id)) - Number(sentResourceIds.includes(a.id)))
+        .slice(0, limit).map((resource) => ({
+          resourceId: resource.id, resourceTitle: resource.title,
+          countryCode: resource.country.code, programSlug: resource.program?.slug ?? null,
+          description: resource.description,
+          cities: resource.locationAssignments.length ? resource.locationAssignments.map((item) => item.location.name)
+            : resource.location ? [resource.location.name] : [],
+          year: resource.year, seasonKeys: resource.seasonKeys,
+          validFrom: resource.validFrom, validUntil: resource.validUntil,
+          tripCompatibility: resourceTripCompatibility(resource, inquiry.preferredStartMonth, inquiry.preferredStartYear),
+          minWeeks: resource.minWeeks, maxWeeks: resource.maxWeeks,
+          minAge: resource.minAge, maxAge: resource.maxAge,
+          tariffs: (resource.tariffs as ResourceTariff[] | null) ?? [],
+          priceFrom: resource.priceCurrency && resource.priceFrom != null ? Number(resource.priceFrom) : null,
+          priceCurrency: resource.priceCurrency, priceUnit: resource.priceUnit, priceNotes: resource.priceNotes,
+          wasSentToCustomer: sentResourceIds.includes(resource.id),
+        })),
+      answerPolicy: 'Usa exclusivamente estos datos confirmados del formulario, por recurso. Un dato ausente no está confirmado. PACKAGE es el precio propio de esa duración y modalidad; EXTRA_WEEK es solo un cargo semanal, nunca un paquete de tres semanas. No sumes cargos ni mezcles folletos. No consultes ni reinterpretes el PDF durante el chat.',
     };
-  }
-
-  private extractResourceSearchTerms(query: string): string[] {
-    const stopWords = new Set([
-      'para', 'como', 'cual', 'cuales', 'cuando', 'donde', 'desde', 'hasta', 'este', 'esta', 'estos',
-      'estas', 'tiene', 'incluye', 'sobre', 'quiero', 'saber', 'puede', 'puedo', 'folleto', 'archivo',
-    ]);
-    const originalTerms = query.toLocaleLowerCase('es')
-      .replace(/[^\p{L}\p{N}]+/gu, ' ')
-      .split(/\s+/)
-      .filter((term) => term.length >= 3 && !stopWords.has(this.normalizeSearchText(term)));
-    const terms = originalTerms.flatMap((term) => {
-      const normalized = this.normalizeSearchText(term);
-      return normalized !== term ? [term, normalized] : [term];
-    });
-    const unique = Array.from(new Set(terms)).slice(0, 10);
-    return unique.length > 0 ? unique : [query.slice(0, 120)];
-  }
-
-  private normalizeSearchText(value: string): string {
-    return value
-      .normalize('NFD')
-      .replace(/[\u0300-\u036f]/g, '')
-      .toLocaleLowerCase('es');
-  }
-
-  private compactResourceExcerpt(value: string): string {
-    const compact = value.replace(/\s+/g, ' ').trim();
-    return compact.length <= 1400 ? compact : `${compact.slice(0, 1400).trim()}...`;
   }
 
   private isUuid(value: string): boolean {
@@ -1099,48 +1028,14 @@ export class ConciergeToolExecutorService {
   }
 
   private async listWeeksOptions(args: ListWeeksOptionsArgs) {
-    const programs = await this.catalogRepository.findPrograms({
-      activeOnly: true,
-      countryCode: args.countryCode,
-      familyKey: args.familyKey,
-    });
-
-    const filteredPrograms = args.programSlug ? programs.filter((program) => program.slug === args.programSlug) : programs;
-
-    const programRanges = filteredPrograms.map((program) => {
-      const legacyOptions = Array.isArray(program.weekOptions)
-        ? program.weekOptions.filter((value): value is number => Number.isFinite(value) && value > 0)
-        : [];
-
-      return {
-        program,
-        minWeeks: program.minWeeks ?? (legacyOptions.length > 0 ? Math.min(...legacyOptions) : null),
-        maxWeeks: program.maxWeeks ?? (legacyOptions.length > 0 ? Math.max(...legacyOptions) : null),
-      };
-    });
-
-    const minCandidates = programRanges
-      .map(({ minWeeks }) => minWeeks)
-      .filter((value): value is number => typeof value === 'number' && Number.isFinite(value) && value > 0);
-    const maxCandidates = programRanges
-      .map(({ maxWeeks }) => maxWeeks)
-      .filter((value): value is number => typeof value === 'number' && Number.isFinite(value) && value > 0);
-
-    const minWeeks = minCandidates.length > 0 ? Math.min(...minCandidates) : null;
-    const maxWeeks = maxCandidates.length > 0 ? Math.max(...maxCandidates) : null;
-
+    const { resources } = await this.listAvailableResources({ ...args, type: 'BROCHURE' });
+    const minimums = resources.flatMap((resource) => resource.minWeeks == null ? [] : [resource.minWeeks]);
+    const maximums = resources.flatMap((resource) => resource.maxWeeks == null ? [] : [resource.maxWeeks]);
     return {
-      countryCode: args.countryCode ?? null,
-      familyKey: args.familyKey ?? null,
-      programSlug: args.programSlug ?? null,
-      minWeeks,
-      maxWeeks,
-      basedOnPrograms: programRanges.map(({ program, minWeeks: programMinWeeks, maxWeeks: programMaxWeeks }) => ({
-        slug: program.slug,
-        name: program.name,
-        minWeeks: programMinWeeks,
-        maxWeeks: programMaxWeeks,
-      })),
+      minWeeks: minimums.length ? Math.min(...minimums) : null,
+      maxWeeks: maximums.length ? Math.max(...maximums) : null,
+      basedOnResources: resources.map(({ id, title, minWeeks, maxWeeks }) => ({ id, title, minWeeks, maxWeeks })),
+      answerPolicy: 'Cada duración pertenece únicamente a su recurso. No prometas todas las duraciones intermedias entre recursos. null significa sin confirmar.',
     };
   }
 

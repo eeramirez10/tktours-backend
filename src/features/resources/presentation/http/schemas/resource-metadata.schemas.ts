@@ -1,3 +1,4 @@
+import { resourceTariffSchema } from '../../../application/schemas/resource-tariff.schema.js';
 import { z } from 'zod';
 
 export const writableResourceTypeSchema = z.enum(['BROCHURE', 'MANUAL']);
@@ -34,6 +35,11 @@ export const optionalNullableShortStringSchema = (maximum: number) => z.preproce
   if (value === null || value === '') return null;
   return typeof value === 'string' ? value.trim() : value;
 }, z.string().min(1).max(maximum).nullable().optional());
+
+export const optionalResourceTariffsSchema = z.preprocess((value) => {
+  if (typeof value !== 'string') return value;
+  try { return JSON.parse(value); } catch { return value; }
+}, z.array(resourceTariffSchema).max(100).nullable().optional());
 
 export function validateResourceMetadata(
   value: {
