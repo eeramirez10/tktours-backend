@@ -316,11 +316,13 @@ test('an intermediate customer question keeps the answer instead of forcing the 
   const context = {
     conversation: {
       currentStage: 'QUALIFY_AGE',
+      contextJson: { cityResourceDelivery: { countryCode: 'CH', familyKey: 'LANGUAGE_COURSE', locationSlug: 'zurich', versionIds: [] } },
       messages: [{ id: 'message-1', direction: 'INBOUND', text: '¿Qué incluye el campamento?', createdAt: new Date() }],
     },
     latestMessage: { id: 'message-1', direction: 'INBOUND', text: '¿Qué incluye el campamento?', createdAt: new Date() },
     activeInquiry: {
       id: 'inquiry-1', family: { key: 'LANGUAGE_COURSE' }, country: { code: 'CH' },
+      location: { slug: 'zurich' },
       studentAge: null, qualificationJson: {},
     },
   };

@@ -23,6 +23,7 @@ function harness(accommodations: Array<{ key: string; name: string }>) {
     detectIntentWithTool: async () => 'UNKNOWN',
     evaluatePolicySignalsWithTool: async () => ({ menuWasShown: true, handoffStep: 'none', asksAccommodationOptions: false }),
     hydrateInquiryFamilyFromIntent: async (context: unknown) => context,
+    applyCityResourceFlow: async () => null,
     getEnforcedNextField: () => 'accommodation',
     getLanguageCourseAgeBlock: () => null,
     resolveCampBrochureState: async () => ({ state: null, contextPatch: null }),
@@ -52,7 +53,8 @@ test('a short types question after asking accommodation lists accommodation rath
   assert.match(result.structured.replyText, /Familia anfitriona/);
   assert.match(result.structured.replyText, /Residencia universitaria/);
   assert.doesNotMatch(result.structured.replyText, /Easter|Verano|No hay folletos/);
-  assert.equal(result.structured.nextStage, 'QUALIFY_ACCOMMODATION');
+  assert.equal(result.structured.nextStage, 'RECOMMEND');
+  assert.equal(result.structured.shouldAskFollowUp, false);
   assert.deepEqual(queried, ['list_available_accommodations']);
 });
 

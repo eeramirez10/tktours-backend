@@ -201,6 +201,9 @@ export class ConciergeToolExecutorService {
     if (menuChoice) {
       return { intent: menuChoice === 'LANGUAGE_COURSE' ? 'MENU_OPTION_1' : menuChoice === 'CAMP' ? 'MENU_OPTION_2' : 'MENU_OPTION_3', confidence: 1, menuWasShown: true };
     }
+    if (/^\d{1,2}[.)]?$/.test(latestMessage)) {
+      return { intent: 'UNKNOWN', confidence: 1, menuWasShown: false };
+    }
 
     const prompt = [
       'Classify the user intent for a WhatsApp education concierge.',
@@ -303,6 +306,7 @@ export class ConciergeToolExecutorService {
       'Allowed accommodationKey: HOST_FAMILY, UNIVERSITY_RESIDENCE, SHARED_APARTMENT, or null.',
       'preferredStartMonth must be 1..12 or null.',
       'preferredStartYear must be a 4-digit year or null.',
+      'Never infer preferredStartYear from a month alone or the edition of a brochure. Use a year only if the customer gives it or uses an explicit relative year such as el próximo año.',
       'preferredStartUndecided must be true when user explicitly says they do not know date/month yet; otherwise false.',
       'weeks must be positive integer or null.',
       'weeksUndecided must be true when user explicitly says they do not know weeks/duration yet; otherwise false.',
@@ -326,6 +330,7 @@ export class ConciergeToolExecutorService {
         'Return strict JSON with keys {"preferredStartMonth","preferredStartYear","confidence"}.',
         'preferredStartMonth: 1..12 or null.',
         'preferredStartYear: 4-digit year or null.',
+        'Do not infer a year from a month alone or a brochure edition. Only use an explicit customer year or relative year expression.',
         'confidence: 0..1.',
       ].join('\n');
 
