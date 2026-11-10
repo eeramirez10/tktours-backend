@@ -200,7 +200,8 @@ export class MetaWhatsAppInboundService {
     }
 
     const requestedMediaUrls = this.getOutboundMediaUrls(outboundMessage);
-    const mediaUrls = await new ResourceDeliveryGuardService().filterMediaUrls(requestedMediaUrls, turn.context.activeInquiry?.id ?? null);
+    const validatedDelivery = await new ResourceDeliveryGuardService().prepareDelivery(requestedMediaUrls, turn.context.activeInquiry?.id ?? null);
+    const mediaUrls = validatedDelivery.urls;
     if (mediaUrls.length !== requestedMediaUrls.length) {
       replyText = mediaUrls.length
         ? 'Te comparto los folletos vigentes. Un asesor de TKTours puede ayudarte con las otras opciones.'
@@ -224,7 +225,7 @@ export class MetaWhatsAppInboundService {
     const mediaResults = await Promise.all(
       mediaUrls.map(async (mediaUrl) => {
         try {
-          return await this.whatsAppClient.sendMessage({ to: waId, mediaUrl });
+          return await this.whatsAppClient.sendMessage({ to: waId, mediaUrl, fileName: validatedDelivery.versions.find((version) => version.url === mediaUrl)?.fileName });
         } catch (error) {
           logger.error({ error, mediaUrl, messageId: outboundMessage?.id }, 'meta whatsapp document request failed');
           const rejected = error instanceof ValidationAppError
@@ -260,6 +261,7 @@ export class MetaWhatsAppInboundService {
           metaMediaMessageIds: mediaResults.map((result) => result.messageId),
           metaMediaStatuses: mediaResults.map((result) => result.status),
           mediaUrls,
+          attachments: validatedDelivery.versions,
         }),
       },
     });

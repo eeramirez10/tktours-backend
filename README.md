@@ -313,6 +313,10 @@ Aplica la migración `20261110120000_whatsapp_durable_inbox` antes de iniciar es
    - `GET /api/concierge/turns`
    - `GET /api/conversations`
 
+Los adjuntos enviados por WhatsApp usan el título del recurso con la extensión del archivo. La versión se valida de nuevo antes del envío y sus identificadores y nombre quedan en los metadatos del mensaje; las URLs históricas siguen siendo compatibles.
+
+Con edad, ciudad, mes y semanas capturados, el concierge presenta todos los recursos compatibles antes de pedir los datos de contacto. La estancia completa debe caber en las fechas registradas (semanas de siete días, último día inclusivo). No se infieren fechas ni duración ausentes, cupos o precios. La recomendación persistida se recalcula si cambian los criterios y no autoriza reenviar archivos ya entregados. Estos cambios no requieren migraciones.
+
 ## Verificación de recepción y continuidad
 
 `pnpm test` ejecuta las pruebas deterministas con dobles de IA y transporte, incluidas las reglas de fechas, tarifas y archivos. La prueba de integración de la bandeja se omite salvo activación explícita.

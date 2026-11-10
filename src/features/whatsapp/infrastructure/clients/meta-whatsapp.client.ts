@@ -1,3 +1,4 @@
+import { resourceDocumentName } from '../../../resources/domain/resource-document-name.js';
 import { env } from '../../../../shared/config/env.js';
 import { logger } from '../../../../shared/config/logger.js';
 import { ValidationAppError } from '../../../../shared/domain/errors/app-error.js';
@@ -6,6 +7,7 @@ export type SendMetaWhatsAppMessageInput = {
   to: string;
   body?: string;
   mediaUrl?: string | null;
+  fileName?: string;
 };
 
 export type SendMetaWhatsAppMessageResult = {
@@ -21,15 +23,6 @@ export function normalizeWhatsAppPhoneNumber(value: string): string {
   return normalized;
 }
 
-function getDocumentFilename(url: string): string | undefined {
-  try {
-    const filename = new URL(url).pathname.split('/').pop()?.trim();
-    return filename && filename.length > 0 ? filename : undefined;
-  } catch {
-    return undefined;
-  }
-}
-
 export class MetaWhatsAppClient {
   async sendMessage(params: SendMetaWhatsAppMessageInput): Promise<SendMetaWhatsAppMessageResult> {
     const body = params.body?.trim();
@@ -38,7 +31,7 @@ export class MetaWhatsAppClient {
       throw new ValidationAppError('Meta WhatsApp message requires text or a public document URL');
     }
 
-    const filename = mediaUrl ? getDocumentFilename(mediaUrl) : undefined;
+    const filename = mediaUrl ? resourceDocumentName(null, params.fileName) : undefined;
     const payload = mediaUrl
       ? {
           messaging_product: 'whatsapp',

@@ -1,3 +1,4 @@
+import { resourceStayCompatibility } from '../../../resources/domain/resource-stay-compatibility.js';
 import { Prisma } from '@prisma/client';
 import { logger } from '../../../../shared/config/logger.js';
 import { conversationRealtimeHub } from '../../../conversations/infrastructure/realtime/conversation-realtime-hub.js';
@@ -218,6 +219,7 @@ export class ConciergeOrchestratorService {
           'find_matching_programs',
         ].includes(name)),
       });
+      await this.applyStayRecommendation(context, policyResult);
       const normalized = policyResult.structured;
       const mediaUrls = policyResult.outboundMediaUrls ?? (policyResult.outboundMediaUrl ? [policyResult.outboundMediaUrl] : []);
       if (mediaUrls.length) {
@@ -246,7 +248,8 @@ export class ConciergeOrchestratorService {
           resourceDeliveries = reserved.flatMap((version) => {
             const url = version.url ?? allowed.find((url) => url.includes(`/versions/${version.versionId}/`))
               ?? allowed[delivery.versions.findIndex((item) => item.versionId === version.versionId)];
-            return url ? [{ sendId: version.sendId, versionId: version.versionId, url }] : [];
+            const descriptor = delivery.versions.find((item) => item.versionId === version.versionId);
+            return url ? [{ ...descriptor, sendId: version.sendId, versionId: version.versionId, url }] : [];
           });
           const reservedUrls = new Set(resourceDeliveries.map((item) => item.url));
           policyResult.outboundMediaUrls = allowed.filter((url) => reservedUrls.has(url));
@@ -596,7 +599,7 @@ export class ConciergeOrchestratorService {
   private async restartInquiry(context: ConciergeTurnContext): Promise<ConciergeTurnContext> {
     const conversation = context.conversation!;
     const nextContext = {
-      ...(conversation.contextJson ?? {}), campBrochure: null, cityResourceMenu: null, cityResourceDelivery: null,
+      ...(conversation.contextJson ?? {}), campBrochure: null, cityResourceMenu: null, cityResourceDelivery: null, resourceRecommendation: null,
       lastExplicitRestart: { incomingMessageId: context.latestMessage!.id, at: new Date().toISOString() },
     };
     const inquiry = await prisma.$transaction(async (tx) => {
@@ -2185,6 +2188,68 @@ export class ConciergeOrchestratorService {
         ...(familyKey === 'CAMP' ? { [this.campBrochureContextKey]: { status: 'SENT', candidates, checkedAt: now, offeredAt: null, sentAt: now } } : {}),
       },
     };
+  }
+
+  private async applyStayRecommendation(context: ConciergeTurnContext, result: Awaited<ReturnType<ConciergeOrchestratorService['applyReplyPolicy']>>): Promise<void> {
+    const inquiry = context.activeInquiry;
+    const interpreted = context.interpretation;
+    if ((!inquiry?.preferredStartMonth || !inquiry.weeks) && context.conversation?.contextJson?.resourceRecommendation) {
+      result.contextPatch = this.mergeContextPatch(result.contextPatch ?? null, { resourceRecommendation: null });
+    }
+    if (!inquiry?.country?.code || !inquiry.family?.key || !inquiry.location?.slug || inquiry.studentAge == null
+      || !inquiry.preferredStartMonth || !inquiry.weeks || !['CAMP', 'LANGUAGE_COURSE'].includes(inquiry.family.key)
+      || !interpreted || interpreted.needsClarification || interpreted.isQuestion || interpreted.changesTopic
+      || interpreted.intent === 'GREETING' || interpreted.requestsResource || interpreted.priceQuestion !== 'NONE'
+      || this.getLanguageCourseAgeBlock(context, interpreted.intent === 'RESTART' ? 'UNKNOWN' : interpreted.intent)) return;
+    const nextField = this.getEnforcedNextField(inquiry);
+    const data = await this.toolExecutor.execute('list_available_resources', {
+      countryCode: inquiry.country.code, familyKey: inquiry.family.key, locationSlug: inquiry.location.slug,
+      programSlug: inquiry.program?.slug, studentAge: inquiry.studentAge, type: 'BROCHURE', activeOnly: true,
+    }) as { resources?: Record<string, unknown>[] };
+    const candidates = (data.resources ?? []).filter((item) => item.countryCode === inquiry.country!.code && item.familyKey === inquiry.family!.key
+      && (item.locationSlug === inquiry.location!.slug || (Array.isArray(item.locationSlugs) && item.locationSlugs.includes(inquiry.location!.slug))))
+      .map((item) => this.toCampBrochureCandidate(item))
+      .filter((item): item is CampBrochureCandidate => item !== null && (item.minAge == null || inquiry.studentAge! >= item.minAge) && (item.maxAge == null || inquiry.studentAge! <= item.maxAge));
+    const matches = candidates.filter((item) => resourceStayCompatibility(item, inquiry.preferredStartMonth!, inquiry.weeks!, inquiry.preferredStartYear) === 'CONFIRMED');
+    const uncertain = candidates.some((item) => resourceStayCompatibility(item, inquiry.preferredStartMonth!, inquiry.weeks!, inquiry.preferredStartYear) === 'UNCONFIRMED');
+    const criteria = { inquiryId: inquiry.id, country: inquiry.country.code, family: inquiry.family.key, city: inquiry.location.slug,
+      program: inquiry.program?.slug ?? null, age: inquiry.studentAge, month: inquiry.preferredStartMonth, year: inquiry.preferredStartYear, weeks: inquiry.weeks };
+    const status = matches.length ? 'CONFIRMED' : uncertain ? 'UNCONFIRMED' : 'NONE';
+    const fingerprint = JSON.stringify({ criteria, status, versions: matches.map((item) => item.versionId).sort() });
+    const previous = context.conversation?.contextJson?.resourceRecommendation as { fingerprint?: string } | undefined;
+    // An unresolved preference must remain unresolved when the customer supplies contact data.
+    if (previous?.fingerprint === fingerprint && status === 'CONFIRMED') return;
+    const month = new Intl.DateTimeFormat('es-MX', { month: 'long', timeZone: 'UTC' }).format(new Date(Date.UTC(2000, inquiry.preferredStartMonth - 1, 1)));
+    if (matches.length) {
+      const names = matches.map((item) => item.resourceTitle);
+      const confirmation = matches.length === 1
+        ? `¡Perfecto! 😊 ${names[0]} se ajusta a las ${inquiry.weeks} semanas que buscas para iniciar en ${month}.`
+        : `¡Perfecto! 😊 Estas opciones se ajustan a las ${inquiry.weeks} semanas que buscas para iniciar en ${month}:\n${names.map((name) => `• ${name}`).join('\n')}`;
+      const followUp = nextField ? await this.buildPromptDrivenFollowUp({ context, nextField, fallbackReplyText: nextField === 'contactName' ? '¿Me compartes tu nombre completo?' : nextField === 'contactEmail' ? '¿Me compartes tu correo electrónico?' : result.structured.replyText }) : '';
+      const handoff = !nextField && result.structured.nextStage === 'CLOSED' ? ' Con los datos capturados, un asesor de TKTours continuará con el seguimiento.' : '';
+      result.structured.replyText = `${confirmation} Las fechas exactas y el cupo los confirmará un asesor.${handoff}${followUp ? `\n\n${followUp}` : ''}`;
+      result.structured.shouldAskFollowUp = Boolean(followUp);
+      result.structured.missingFields = nextField ? [nextField] : [];
+      const eligible = new Set(matches.map((item) => this.toAbsoluteMediaUrl(item.fileUrl)));
+      const urls = result.outboundMediaUrls ?? (result.outboundMediaUrl ? [result.outboundMediaUrl] : []);
+      result.outboundMediaUrls = urls.filter((url) => eligible.has(url));
+      result.outboundMediaUrl = result.outboundMediaUrls[0] ?? null;
+    } else {
+      result.structured.replyText = uncertain
+        ? `Para ${inquiry.weeks} semanas comenzando en ${month}, falta confirmar la duración o las fechas de las opciones disponibles. ¿Prefieres revisar alternativas o mantener tu preferencia para seguimiento de un asesor?`
+        : `No tengo una opción confirmada para ${inquiry.weeks} semanas completas comenzando en ${month}. ¿Prefieres revisar otro mes o duración, o mantener tu preferencia para seguimiento de un asesor?`;
+      if (interpreted.maintainTravelMonth) result.structured.replyText = `Conservamos tu preferencia por ${inquiry.weeks} semanas comenzando en ${month}. Un asesor confirmará las alternativas compatibles.`;
+      result.structured.nextStage = interpreted.maintainTravelMonth ? 'ESCALATED' : 'QUALIFY_DATES';
+      result.structured.shouldAskFollowUp = !interpreted.maintainTravelMonth;
+      result.structured.missingFields = [];
+      result.outboundMediaUrls = [];
+      result.outboundMediaUrl = null;
+    }
+    result.structured.shouldRefreshRecommendations = false;
+    result.contextPatch = this.mergeContextPatch(result.contextPatch ?? null, { resourceRecommendation: {
+      fingerprint, criteria, status, resourceIds: matches.map((item) => item.resourceId), versionIds: matches.map((item) => item.versionId), presentedAt: new Date().toISOString(),
+    } });
+    result.trace = { strategy: result.structured.shouldAskFollowUp ? 'single_follow_up' : 'none', details: { reason: 'resource_stay_recommendation', status, resourceIds: matches.map((item) => item.resourceId) } };
   }
 
   private describeResource(candidate: CampBrochureCandidate): string {

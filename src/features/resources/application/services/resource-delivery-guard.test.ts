@@ -42,14 +42,14 @@ test('local attachments must belong to the validated resource as well as the cur
   const original = prisma.resourceVersion.findMany;
   context.after(() => { prisma.resourceVersion.findMany = original; });
   prisma.resourceVersion.findMany = (async () => [{
-    id: versionId, sourceType: 'UPLOAD', fileUrl: validUrl,
+    id: versionId, sourceType: 'UPLOAD', fileUrl: validUrl, fileName: 'original.pdf', mimeType: 'application/pdf',
     resource: {
-      id: resourceId, active: true, type: 'BROCHURE', family: { key: 'CAMP' }, program: null, year: 2099,
+      id: resourceId, title: 'Folleto Canadá', active: true, type: 'BROCHURE', family: { key: 'CAMP' }, program: null, year: 2099,
       shareFrom: new Date('2000-01-01'), shareUntil: new Date('2099-12-31'), validFrom: null, validUntil: null,
       minAge: null, maxAge: null,
     },
   }]) as unknown as typeof prisma.resourceVersion.findMany;
   const delivery = await new ResourceDeliveryGuardService().prepareDelivery([validUrl, wrongParent], null);
   assert.deepEqual(delivery.urls, [validUrl]);
-  assert.deepEqual(delivery.versions, [{ resourceId, versionId, url: validUrl }]);
+  assert.deepEqual(delivery.versions, [{ resourceId, versionId, url: validUrl, fileName: 'Folleto Canadá.pdf', resourceTitle: 'Folleto Canadá', mimeType: 'application/pdf' }]);
 });

@@ -1,8 +1,9 @@
+import { resourceDocumentName } from '../../domain/resource-document-name.js';
 import { resourceTripCompatibility } from '../../domain/resource-trip-compatibility.js';
 import { prisma } from '../../../../shared/infrastructure/database/prisma.js';
 import { resourceEligibilityFilters, resourceValidityStatus } from '../../domain/resource-validity.js';
 
-type ValidatedDelivery = { urls: string[]; versions: Array<{ resourceId: string; versionId: string; url?: string }> };
+type ValidatedDelivery = { urls: string[]; versions: Array<{ resourceId: string; versionId: string; url?: string; fileName?: string; resourceTitle?: string; mimeType?: string | null }> };
 
 export class ResourceDeliveryGuardService {
   async filterMediaUrls(urls: string[], inquiryId: string | null): Promise<string[]> {
@@ -50,9 +51,9 @@ export class ResourceDeliveryGuardService {
         },
       },
       select: {
-        id: true, fileUrl: true, sourceType: true,
+        id: true, fileUrl: true, sourceType: true, fileName: true, mimeType: true,
         resource: { select: {
-          id: true, active: true, type: true, year: true, shareFrom: true, shareUntil: true,
+          id: true, title: true, active: true, type: true, year: true, shareFrom: true, shareUntil: true,
           validFrom: true, validUntil: true, minAge: true, maxAge: true,
           family: { select: { key: true } }, program: { select: { minAge: true, maxAge: true } },
         } },
@@ -71,7 +72,7 @@ export class ResourceDeliveryGuardService {
     return {
       urls: parsedUrls.filter((url) => allowed.some((version) => matchesUrl(version, url))).map(({ url }) => url),
       versions: allowed.filter((version) => parsedUrls.some((url) => matchesUrl(version, url)))
-        .map((version) => ({ resourceId: version.resource.id, versionId: version.id, url: parsedUrls.find((url) => matchesUrl(version, url))!.url })),
+        .map((version) => ({ resourceId: version.resource.id, versionId: version.id, fileName: resourceDocumentName(version.resource.title, version.fileName), resourceTitle: version.resource.title, mimeType: version.mimeType, url: parsedUrls.find((url) => matchesUrl(version, url))!.url })),
     };
   }
 }
