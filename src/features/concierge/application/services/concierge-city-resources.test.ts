@@ -1,6 +1,6 @@
+import { interpretation } from '../../../../scripts/fixtures/concierge-interpretation.js';
 import assert from 'node:assert/strict';
 import test, { beforeEach, afterEach } from 'node:test';
-import { selectedCity } from '../../domain/city-selection.js';
 import { ConciergeCityResourcesService } from './concierge-city-resources.service.js';
 import { ConciergeOrchestratorService } from './concierge-orchestrator.service.js';
 import { ConciergeToolExecutorService } from './concierge-tool-executor.service.js';
@@ -38,6 +38,8 @@ function harness(resources = [brochure()]) {
     campBrochureContextKey: 'campBrochure',
     toolExecutor: { execute: async (name: string, args: Record<string, unknown>) => {
       calls.push({ name, args });
+      if (name === 'list_available_course_types') return { courseTypes: [{ familyKey: 'CAMP', name: 'Campamentos / viajes', programCount: 1, brochureCount: 1 }] };
+      if (name === 'interpret_message') return interpretation({ locationSlug: 'ca-quebec' });
       if (name === 'list_available_locations') return { locations: [...cities, { slug: 'unused', name: 'Toronto' }] };
       if (name === 'list_available_programs') return { programs: [] };
       if (name === 'list_available_resources') return { resources };
@@ -60,15 +62,6 @@ function harness(resources = [brochure()]) {
   };
   return { service, calls };
 }
-
-test('city names ignore accents; numeric selections only apply to the last city menu', () => {
-  assert.equal(selectedCity('Quiero ir a Quebec', cities)?.slug, 'ca-quebec');
-  assert.equal(selectedCity('2', cities, 'Actualmente tenemos programas en las siguientes ciudades:')?.slug, 'ca-quebec');
-  assert.equal(selectedCity('2', cities, '¿Cuántas semanas?'), null);
-  assert.equal(selectedCity('Toronto', cities), null);
-  assert.equal(selectedCity('Me gustaría ir a Montreal, por favor', cities)?.slug, 'ca-montreal');
-  assert.equal(selectedCity('la opción 2', cities, 'Actualmente tenemos programas en las siguientes ciudades:')?.slug, 'ca-quebec');
-});
 
 test('city menu excludes unused catalog cities and preserves separate names for multi-city PDFs', async () => {
   const { service } = harness();
@@ -153,16 +146,6 @@ test('active program locations are available without a PDF but unrelated catalog
   assert.deepEqual(result.cities, [cities[1]]);
 });
 
-test('a city-menu number cannot be reclassified by the intent tool as a course-family number', async () => {
-  const tools = Object.create(ConciergeToolExecutorService.prototype) as {
-    execute: (name: string, args: unknown) => Promise<{ intent: string }>;
-  };
-  const result = await tools.execute('detect_user_intent', { latestMessage: '1', recentMessages: [
-    { direction: 'OUTBOUND', text: 'Actualmente tenemos programas en las siguientes ciudades:\n1) Montreal' },
-  ] });
-  assert.equal(result.intent, 'UNKNOWN');
-});
-
 test('a stricter age filter after delivery does not reopen the old brochure-permission flow', async () => {
   const { service } = harness();
   const first = await service.applyCityResourceFlow(parsed, { activeInquiry: { ...inquiry(), location: cities[0] }, cityWasSelected: true });
@@ -212,7 +195,7 @@ for (const eligible of [true, false]) {
       if (name === 'evaluate_policy_signals') return { handoffStep: 'none', menuWasShown: true };
       if (name === 'list_weeks_options') return { minWeeks: 1, maxWeeks: 8 };
       return tools.execute(name, args);
-    } } as never, { createTurn: async () => ({ id: 'turn' }), completeTurn: async () => {}, failTurn: async () => {} } as never);
+    } } as never, { createTurn: async () => ({ id: 'turn' }), createToolCall: async () => {}, completeToolCall: async () => {}, failToolCall: async () => {}, completeTurn: async () => {}, failTurn: async () => {} } as never);
     Object.assign(service, { buildTurnContext: async () => ({ conversation, activeInquiry: lead, latestMessage: conversation.messages[1] }), recordResourceSend: async () => {} });
     await service.runTurn({ conversationId: 'conversation', incomingMessageId: 'in' });
     assert.equal(lead.location?.slug, 'ca-quebec');
@@ -263,7 +246,7 @@ test('January without a year shows actual trip dates; changing to July after res
 
 test('keeping January preserves the preference for advisor follow-up', async () => {
   const result = await harness().service.applyCityResourceFlow(parsed, {
-    activeInquiry: { ...inquiry(), preferredStartMonth: 1, location: cities[0] }, latestMessage: { text: 'Prefiero mantener enero' },
+    activeInquiry: { ...inquiry(), preferredStartMonth: 1, location: cities[0] }, interpretation: interpretation({ maintainTravelMonth: true }), latestMessage: { text: 'Prefiero mantener enero' },
   });
   assert.equal(result!.structured.nextStage, 'ESCALATED');
   assert.match(result!.structured.replyText, /preferencia por enero/);
@@ -275,7 +258,7 @@ test('an explicit request or proven failure can resend a PDF; a city change alon
   const { service } = harness();
   const context = { activeInquiry: { ...inquiry(), location: cities[0] }, conversation: {} };
   assert.equal(await service.applyCityResourceFlow(parsed, { ...context, cityWasSelected: true }), null);
-  const requested = await service.applyCityResourceFlow(parsed, { ...context, latestMessage: { text: 'Envíame el folleto otra vez' } });
+  const requested = await service.applyCityResourceFlow(parsed, { ...context, interpretation: interpretation({ requestsResource: true }), latestMessage: { text: 'Envíame el folleto otra vez' } });
   assert.equal(requested!.outboundMediaUrls.length, 1);
   sends[0]!.deliveryStatus = 'FAILED';
   const failed = await service.applyCityResourceFlow(parsed, { ...context, latestMessage: { text: 'julio' } });

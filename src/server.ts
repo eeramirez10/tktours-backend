@@ -1,3 +1,4 @@
+import { WhatsAppInboxWorker } from './features/whatsapp/application/services/whatsapp-inbox-worker.service.js';
 import { createApp } from './app.js';
 import { conversationRealtimeHub } from './features/conversations/infrastructure/realtime/conversation-realtime-hub.js';
 import { env } from './shared/config/env.js';
@@ -10,9 +11,12 @@ const server = app.listen(env.PORT, '0.0.0.0', () => {
 });
 
 conversationRealtimeHub.attach(server);
+const inboxWorker = new WhatsAppInboxWorker();
+inboxWorker.start();
 
 function shutdown(signal: NodeJS.Signals) {
   logger.info({ signal }, 'shutting down server');
+  inboxWorker.stop();
   conversationRealtimeHub.close();
 
   server.close((error) => {

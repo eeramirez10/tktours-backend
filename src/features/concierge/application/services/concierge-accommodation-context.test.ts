@@ -1,3 +1,4 @@
+import { interpretation } from '../../../../scripts/fixtures/concierge-interpretation.js';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { ConciergeOrchestratorService } from './concierge-orchestrator.service.js';
@@ -5,6 +6,7 @@ import { prisma } from '../../../../shared/infrastructure/database/prisma.js';
 import { PrismaInquiryRepository } from '../../../inquiries/infrastructure/repositories/prisma-inquiry.repository.js';
 
 const turnContext = {
+  interpretation: interpretation({ asksAccommodationOptions: true, isQuestion: true }),
   conversation: { messages: [
     { id: 'previous', direction: 'OUTBOUND', text: '¿Qué tipo de alojamiento prefieren?' },
     { id: 'incoming', direction: 'INBOUND', text: 'Qué tipos tienes' },
@@ -21,7 +23,7 @@ function harness(accommodations: Array<{ key: string; name: string }>) {
   const queried: string[] = [];
   const service = Object.assign(Object.create(ConciergeOrchestratorService.prototype), {
     detectIntentWithTool: async () => 'UNKNOWN',
-    evaluatePolicySignalsWithTool: async () => ({ menuWasShown: true, handoffStep: 'none', asksAccommodationOptions: false }),
+    evaluatePolicySignalsWithTool: async (context: { interpretation: { asksAccommodationOptions: boolean } }) => context.interpretation,
     hydrateInquiryFamilyFromIntent: async (context: unknown) => context,
     applyCityResourceFlow: async () => null,
     getEnforcedNextField: () => 'accommodation',
@@ -69,7 +71,7 @@ test('missing accommodation rules do not become a false claim that no PDFs exist
 
 test('an explicit question about programs is not mistaken for accommodation', async () => {
   const { service, queried } = harness([]);
-  const context = { ...turnContext, latestMessage: { ...turnContext.latestMessage, text: 'Qué tipos de programas tienes' } };
+  const context = { ...turnContext, interpretation: interpretation(), latestMessage: { ...turnContext.latestMessage, text: 'Qué tipos de programas tienes' } };
   const result = await service.applyReplyPolicy(parsed, context, { resourceContentSearchUsed: false, dataToolUsed: true });
   assert.equal(result.structured.replyText, parsed.replyText);
   assert.deepEqual(queried, []);
@@ -77,7 +79,7 @@ test('an explicit question about programs is not mistaken for accommodation', as
 
 test('the follow-up flow never asks customers to choose unconfigured accommodations', async () => {
   const { service } = harness([]);
-  const context = { ...turnContext, latestMessage: { ...turnContext.latestMessage, text: '2027' } };
+  const context = { ...turnContext, interpretation: interpretation(), latestMessage: { ...turnContext.latestMessage, text: '2027' } };
   const result = await service.applyReplyPolicy({ ...parsed, replyIntent: 'CONTINUE_FLOW', missingFields: ['accommodation'] }, context,
     { resourceContentSearchUsed: false, dataToolUsed: false });
   assert.equal(result.structured.nextStage, 'ESCALATED');
@@ -107,7 +109,7 @@ test('sending a brochure does not append an unsupported accommodation selection'
     resolveCampBrochureReplyAction: async () => ({ action: 'SEND', selectedSeasonKeys: ['SUMMER'], sendAll: false }),
     buildPromptDrivenCampBrochureSend: async () => 'Con gusto, te comparto el folleto.',
   });
-  const context = { ...turnContext, latestMessage: { ...turnContext.latestMessage, text: 'Sí' } };
+  const context = { ...turnContext, interpretation: interpretation(), latestMessage: { ...turnContext.latestMessage, text: 'Sí' } };
   const result = await service.applyReplyPolicy({ ...parsed, replyIntent: 'CONTINUE_FLOW' }, context,
     { resourceContentSearchUsed: false, dataToolUsed: false });
   assert.match(result.structured.replyText, /te comparto el folleto/);

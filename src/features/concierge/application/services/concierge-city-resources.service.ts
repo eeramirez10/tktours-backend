@@ -18,8 +18,9 @@ export class ConciergeCityResourcesService {
       return Array.isArray(list) ? list.filter((item): item is Resource => Boolean(item) && typeof item === 'object') : [];
     };
     const resources = records(resourcesResult, 'resources');
+    const programs = records(programsResult, 'programs');
     const allowed = new Map<string, string>();
-    for (const program of records(programsResult, 'programs')) {
+    for (const program of programs) {
       if (typeof program.locationSlug === 'string' && typeof program.locationName === 'string') allowed.set(program.locationSlug, program.locationName);
     }
     for (const resource of resources) {
@@ -34,6 +35,6 @@ export class ConciergeCityResourcesService {
       if (typeof location.slug === 'string' && typeof location.name === 'string' && allowed.has(location.slug)) allowed.set(location.slug, location.name);
     }
     const cities: ConciergeCity[] = [...allowed].map(([slug, name]) => ({ slug, name })).sort((a, b) => a.name.localeCompare(b.name, 'es'));
-    return { cities, resources };
+    return { cities, resources, programs };
   }
 }

@@ -1,5 +1,10 @@
+import { Prisma } from '@prisma/client';
+import { logger } from '../../../../shared/config/logger.js';
+import { conversationRealtimeHub } from '../../../conversations/infrastructure/realtime/conversation-realtime-hub.js';
+import { conversationTurnQueue } from '../../../../shared/application/keyed-task-queue.js';
+import { conciergeMessageInterpretationSchema, type ConciergeMessageInterpretation } from '../schemas/concierge-message-interpretation.schema.js';
 import { resourceTripCompatibility } from '../../../resources/domain/resource-trip-compatibility.js';
-import { ResourceSendHistoryService, explicitlyRequestsResource } from '../../../resources/application/services/resource-send-history.service.js';
+import { ResourceSendHistoryService } from '../../../resources/application/services/resource-send-history.service.js';
 import type { ResourceTariff } from '../../../resources/domain/types/resource.types.js';
 import { ResourceDeliveryGuardService } from '../../../resources/application/services/resource-delivery-guard.service.js';
 import { ConflictAppError, NotFoundAppError, ValidationAppError } from '../../../../shared/domain/errors/app-error.js';
@@ -15,9 +20,8 @@ import { conciergeStructuredResponseSchema } from '../schemas/concierge-structur
 import { conciergeTools } from '../tools/concierge-tools.registry.js';
 import { ConciergeToolExecutorService } from './concierge-tool-executor.service.js';
 import { ConciergeCityResourcesService } from './concierge-city-resources.service.js';
-import { selectedCity } from '../../domain/city-selection.js';
 import { conciergeFamilies } from '../../../catalog/domain/concierge-families.js';
-import { courseMenuText, displayedCourseChoice, type CourseOffering } from '../../domain/course-offerings.js';
+import { courseMenuText, type CourseOffering } from '../../domain/course-offerings.js';
 
 export type ConciergeTurnContext = {
   conversation: Awaited<ReturnType<PrismaConversationRepository['findById']>>;
@@ -28,6 +32,8 @@ export type ConciergeTurnContext = {
     text: string;
     createdAt: Date;
   } | null;
+  interpretation?: ConciergeMessageInterpretation;
+  restarted?: boolean;
   availableCourseTypes?: CourseOffering[];
   cityWasSelected?: boolean;
   countryWasSelected?: boolean;
@@ -92,7 +98,11 @@ export class ConciergeOrchestratorService {
     this.refreshInquiryRecommendationsUseCase = new RefreshInquiryRecommendationsUseCase(this.inquiryRepository);
   }
 
-  async runTurn(params: { conversationId: string; incomingMessageId: string }) {
+  runTurn(params: { conversationId: string; incomingMessageId: string }) {
+    return conversationTurnQueue.run(params.conversationId, () => this.performTurn(params));
+  }
+
+  private async performTurn(params: { conversationId: string; incomingMessageId: string }) {
     let context = await this.buildTurnContext(params);
 
     if (!context.latestMessage) {
@@ -103,12 +113,13 @@ export class ConciergeOrchestratorService {
       throw new ConflictAppError('The concierge is disabled while the conversation is under human control');
     }
 
+    if (context.latestMessage.direction !== 'INBOUND') throw new ValidationAppError('Concierge turns require an inbound message');
+
     if (context.latestMessage.id !== params.incomingMessageId) {
       throw new NotFoundAppError('Incoming message does not belong to the conversation');
     }
 
     context = { ...context, availableCourseTypes: await this.loadAvailableCourseTypes() };
-    context = await this.hydrateInquiryFromLatestMessage(context);
 
     const currentControlState = await prisma.conversation.findUnique({
       where: { id: params.conversationId },
@@ -119,7 +130,7 @@ export class ConciergeOrchestratorService {
     }
 
     const inputPayload = this.buildModelInputPayload(context);
-    const input = this.renderModelInput(inputPayload);
+    let input = this.renderModelInput(inputPayload);
 
     const turn = await this.turnTraceRepository.createTurn({
       conversationId: params.conversationId,
@@ -138,6 +149,15 @@ export class ConciergeOrchestratorService {
     let resourceDeliveries: Array<{ sendId: string; versionId: string; url: string }> = [];
 
     try {
+      await this.turnTraceRepository.createToolCall({ turnId: turn.id, callId: 'interpret_message', toolName: 'interpret_message', argumentsJson: inputPayload });
+      try {
+        context = await this.hydrateInquiryFromLatestMessage(context);
+        await this.turnTraceRepository.completeToolCall({ turnId: turn.id, callId: 'interpret_message', outputJson: context.interpretation });
+      } catch (error) {
+        await this.turnTraceRepository.failToolCall({ turnId: turn.id, callId: 'interpret_message', errorMessage: this.getErrorMessage(error) });
+        throw error;
+      }
+      input = this.renderModelInput(this.buildModelInputPayload(context));
       const previousResponseId = this.getPreviousResponseId(context.conversation?.contextJson ?? null);
 
       let firstResponse;
@@ -146,19 +166,26 @@ export class ConciergeOrchestratorService {
         firstResponse = await this.responsesClient.createTextResponse({
           instructions: conciergeSystemPrompt,
           input,
-          tools: [...conciergeTools] as unknown as Array<Record<string, unknown>>,
+          tools: conciergeTools.filter((tool) => tool.name !== 'update_inquiry') as unknown as Array<Record<string, unknown>>,
           previousResponseId,
         });
       } catch (error) {
-        if (!previousResponseId) {
+        const apiError = error as { status?: number; param?: string; code?: string };
+        const missingPrevious = (apiError.status === 400 || apiError.status === 404)
+          && (apiError.param === 'previous_response_id' || apiError.code === 'previous_response_not_found');
+        if (!previousResponseId || !missingPrevious) {
           throw error;
         }
+
+        logger.warn({ conversationId: params.conversationId, previousResponseId, turnId: turn.id }, 'recovering unavailable response chain from persisted visible history');
+        await this.turnTraceRepository.createToolCall({ turnId: turn.id, callId: 'context_recovery', toolName: 'context_recovery', argumentsJson: { previousResponseId, reason: 'previous_response_unavailable' } });
 
         firstResponse = await this.responsesClient.createTextResponse({
           instructions: conciergeSystemPrompt,
           input,
-          tools: [...conciergeTools] as unknown as Array<Record<string, unknown>>,
+          tools: conciergeTools.filter((tool) => tool.name !== 'update_inquiry') as unknown as Array<Record<string, unknown>>,
         });
+        await this.turnTraceRepository.completeToolCall({ turnId: turn.id, callId: 'context_recovery', outputJson: { responseId: firstResponse.id, source: 'persisted_visible_history' } });
       }
 
       const { response, usedToolNames } = await this.completeToolCalls(firstResponse, turn.id);
@@ -214,7 +241,7 @@ export class ConciergeOrchestratorService {
         if (context.activeInquiry?.id && delivery.versions.length) {
           const reserved = await new ResourceSendHistoryService().reserve(
             context.activeInquiry.id, delivery.versions, params.incomingMessageId,
-            explicitlyRequestsResource(context.latestMessage?.text ?? ''),
+            context.interpretation?.requestsResource === true,
           );
           resourceDeliveries = reserved.flatMap((version) => {
             const url = version.url ?? allowed.find((url) => url.includes(`/versions/${version.versionId}/`))
@@ -295,6 +322,7 @@ export class ConciergeOrchestratorService {
       for (const call of functionCalls) {
         if (call.type !== 'function_call') continue;
         usedToolNames.add(call.name);
+        if (call.name === 'update_inquiry') throw new ValidationAppError('Inquiry changes must come from the validated message interpretation');
         const args = this.safeParseArguments(call.arguments);
 
         await this.turnTraceRepository.createToolCall({
@@ -329,7 +357,7 @@ export class ConciergeOrchestratorService {
       response = await this.responsesClient.createTextResponse({
         instructions: conciergeSystemPrompt,
         input: toolOutputs,
-        tools: [...conciergeTools] as unknown as Array<Record<string, unknown>>,
+        tools: conciergeTools.filter((tool) => tool.name !== 'update_inquiry') as unknown as Array<Record<string, unknown>>,
         previousResponseId: response.id,
       });
     }
@@ -353,6 +381,16 @@ export class ConciergeOrchestratorService {
 
     const latestMessage = conversation.messages.find((message) => message.id === params.incomingMessageId) ?? null;
 
+    if (latestMessage) {
+      const incomingIndex = conversation.messages.findIndex((message) => message.id === latestMessage.id);
+      const currentJobId = latestMessage.metadata?.inboxJobId;
+      conversation.messages = conversation.messages.filter((message, index) => {
+        if (message.direction !== 'INBOUND') return true;
+        const jobId = message.metadata?.inboxJobId;
+        if (typeof currentJobId === 'string' && typeof jobId === 'string') return BigInt(jobId) <= BigInt(currentJobId);
+        return index <= incomingIndex;
+      });
+    }
     const newestInquiry = conversation.inquiries[0] ?? null;
 
     const activeInquiry =
@@ -381,7 +419,7 @@ export class ConciergeOrchestratorService {
 
     const activeInquiry = context.activeInquiry;
     const previousOutbound = this.findPreviousOutboundMessage(context);
-    const cityData = activeInquiry?.country?.code && activeInquiry.family?.key
+    let cityData = activeInquiry?.country?.code && activeInquiry.family?.key
       && ['CAMP', 'LANGUAGE_COURSE'].includes(activeInquiry.family.key)
       ? await new ConciergeCityResourcesService(this.toolExecutor).load({ countryCode: activeInquiry.country.code,
         familyKey: activeInquiry.family.key, studentAge: activeInquiry.studentAge ?? undefined,
@@ -391,39 +429,41 @@ export class ConciergeOrchestratorService {
     } | undefined;
     const menuMatches = savedMenu?.countryCode === activeInquiry?.country?.code
       && savedMenu?.familyKey === activeInquiry?.family?.key && savedMenu?.replyText === previousOutbound?.text;
-    const menuCities = menuMatches && Array.isArray(savedMenu?.options) ? savedMenu.options : cityData?.cities ?? [];
-    const choice = selectedCity(context.latestMessage.text, menuCities, savedMenu && !menuMatches ? '' : previousOutbound?.text);
-    const cityChoice = cityData?.cities.find((city) => city.slug === choice?.slug) ?? null;
-    const choosingCity = /actualmente tenemos programas en las siguientes ciudades/i.test(previousOutbound?.text ?? '');
-    const expectedField = choosingCity ? 'program' : activeInquiry ? this.getEnforcedNextField(activeInquiry) : null;
-    const extracted = cityChoice ? {} : await this.toolExecutor.execute('extract_inquiry_fields', {
+    const allLocations = !cityData ? await this.toolExecutor.execute('list_available_locations', {
+      familyKey: activeInquiry?.family?.key, activeOnly: true,
+    }) as { locations?: Array<{ slug: string; name: string; countryCode: string }> } : null;
+    const programOptions = cityData?.programs ?? ((await this.toolExecutor.execute('list_available_programs', { activeOnly: true })) as { programs?: Record<string, unknown>[] })?.programs ?? [];
+    const extracted = conciergeMessageInterpretationSchema.parse(await this.toolExecutor.execute('interpret_message', {
       latestMessage: context.latestMessage.text,
       previousAssistantMessage: previousOutbound?.text ?? null,
-      expectedField,
-      recentMessages: (context.conversation?.messages ?? []).slice(-10).map((message) => ({
-        direction: message.direction,
-        text: message.text,
+      expectedField: menuMatches ? 'destinationCity' : activeInquiry ? this.getEnforcedNextField(activeInquiry) : null,
+      recentMessages: context.conversation.messages.slice(-20).map(({ direction, text }) => ({ direction, text })),
+      inquirySnapshot: activeInquiry,
+      availableCourseTypes: context.availableCourseTypes ?? await this.loadAvailableCourseTypes(),
+      availableCities: cityData?.cities ?? allLocations?.locations ?? [],
+      availablePrograms: programOptions.filter((program) => typeof program.slug === 'string').map((program) => ({
+        slug: program.slug, name: program.name, countryCode: program.countryCode, familyKey: program.familyKey, locationSlug: program.locationSlug,
       })),
-      inquirySnapshot: activeInquiry ? {
-        countryCode: activeInquiry.country?.code ?? null,
-        studentAge: activeInquiry.studentAge,
-        residenceCountry: this.getResidenceCountryFromInquiry(activeInquiry),
-        cityOfResidence: activeInquiry.cityOfResidence,
-        tripDays: this.getTripDaysFromInquiry(activeInquiry),
-        familyKey: activeInquiry.family?.key ?? null,
-        accommodationKey: activeInquiry.accommodationType?.key ?? null,
-        preferredStartMonth: activeInquiry.preferredStartMonth,
-        preferredStartYear: activeInquiry.preferredStartYear,
-        preferredStartStatus: this.getPreferredStartStatusFromInquiry(activeInquiry),
-        weeks: activeInquiry.weeks,
-        weeksStatus: this.getWeeksStatusFromInquiry(activeInquiry),
-      } : null,
+      brochureState: this.getCampBrochureStateFromContext(context),
+      displayedCityMenu: menuMatches ? savedMenu : null,
       nowIso: new Date().toISOString(),
-    });
-
-    if (!extracted || typeof extracted !== 'object') {
-      return context;
+    }));
+    context = { ...context, interpretation: extracted };
+    if (extracted.needsClarification || extracted.confidence < 0.7) {
+      return { ...context, interpretation: { ...extracted, needsClarification: true } };
     }
+    if (extracted.intent === 'RESTART') return this.restartInquiry(context);
+    if (!cityData && extracted.locationSlug) {
+      const location = allLocations?.locations?.find((city) => city.slug === extracted.locationSlug);
+      const countryCode = extracted.countryCode ?? location?.countryCode;
+      const familyKey = extracted.familyKey ?? activeInquiry?.family?.key;
+      if (countryCode && familyKey) {
+        cityData = await new ConciergeCityResourcesService(this.toolExecutor).load({ countryCode, familyKey, studentAge: extracted.studentAge ?? activeInquiry?.studentAge ?? undefined });
+        extracted.countryCode = countryCode;
+      }
+    }
+    const cityChoice = cityData?.cities.find((city) => city.slug === extracted.locationSlug) ?? null;
+    if (extracted.locationSlug && !cityChoice) return { ...context, interpretation: { ...extracted, needsClarification: true } };
 
     const inquiryUpdate: Record<string, unknown> = {};
 
@@ -433,20 +473,18 @@ export class ConciergeOrchestratorService {
       }
     };
 
-    if (!cityChoice) maybeSet('countryCode', (extracted as { countryCode?: unknown }).countryCode);
+    maybeSet('countryCode', (extracted as { countryCode?: unknown }).countryCode);
     if (cityChoice) {
       inquiryUpdate.locationSlug = cityChoice.slug;
       if (cityChoice.slug !== activeInquiry?.location?.slug) inquiryUpdate.programSlug = null;
     }
     if (inquiryUpdate.countryCode && inquiryUpdate.countryCode !== activeInquiry?.country?.code) {
-      inquiryUpdate.locationSlug = null;
+      if (!cityChoice) inquiryUpdate.locationSlug = null;
       inquiryUpdate.programSlug = null;
     }
     maybeSet('studentAge', (extracted as { studentAge?: unknown }).studentAge);
-    if (!cityChoice) maybeSet('cityOfResidence', (extracted as { cityOfResidence?: unknown }).cityOfResidence);
+    maybeSet('cityOfResidence', (extracted as { cityOfResidence?: unknown }).cityOfResidence);
     maybeSet('familyKey', (extracted as { familyKey?: unknown }).familyKey);
-    const menuChoice = displayedCourseChoice(context.latestMessage.text, previousOutbound?.text ?? null);
-    if (menuChoice) inquiryUpdate.familyKey = menuChoice;
     if (inquiryUpdate.familyKey && context.availableCourseTypes
       && !context.availableCourseTypes.some((offering) => offering.familyKey === inquiryUpdate.familyKey)) {
       delete inquiryUpdate.familyKey;
@@ -458,6 +496,7 @@ export class ConciergeOrchestratorService {
       if (!Object.hasOwn(inquiryUpdate, 'locationSlug')) inquiryUpdate.locationSlug = null;
       if (!Object.hasOwn(inquiryUpdate, 'accommodationKey')) inquiryUpdate.accommodationKey = null;
     }
+    maybeSet('programSlug', extracted.programSlug);
     maybeSet('accommodationKey', (extracted as { accommodationKey?: unknown }).accommodationKey);
     maybeSet('preferredStartMonth', (extracted as { preferredStartMonth?: unknown }).preferredStartMonth);
     maybeSet('preferredStartYear', (extracted as { preferredStartYear?: unknown }).preferredStartYear);
@@ -470,7 +509,7 @@ export class ConciergeOrchestratorService {
     let qualificationJsonChanged = false;
 
     const residenceCountry = (extracted as { residenceCountry?: unknown }).residenceCountry;
-    if (!cityChoice && typeof residenceCountry === 'string' && residenceCountry.trim().length > 0) {
+    if (typeof residenceCountry === 'string' && residenceCountry.trim().length > 0) {
       qualificationJson.residenceCountry = residenceCountry.trim();
       qualificationJsonChanged = true;
     }
@@ -528,12 +567,15 @@ export class ConciergeOrchestratorService {
     if (Object.keys(contactUpdate).length > 0) {
       await this.upsertInquiryContact({
         inquiryId: activeInquiry?.id ?? null,
-        conversationId: context.conversation.id,
+        conversationId: context.conversation!.id,
         contactId: activeInquiry?.contact?.id ?? context.conversation?.contact?.id ?? null,
         contactUpdate,
       });
     }
 
+    if (Object.keys(contactUpdate).length > 0 || Object.keys(inquiryUpdate).length > 0) {
+      conversationRealtimeHub.publish({ type: 'conversation.updated', conversationId: context.conversation!.id, messageId: context.latestMessage!.id });
+    }
     const updatedInquiry = activeInquiry ? await this.inquiryRepository.findById(activeInquiry.id) : null;
 
     return {
@@ -549,6 +591,24 @@ export class ConciergeOrchestratorService {
         target[key] = value.trim();
       }
     }
+  }
+
+  private async restartInquiry(context: ConciergeTurnContext): Promise<ConciergeTurnContext> {
+    const conversation = context.conversation!;
+    const nextContext = {
+      ...(conversation.contextJson ?? {}), campBrochure: null, cityResourceMenu: null, cityResourceDelivery: null,
+      lastExplicitRestart: { incomingMessageId: context.latestMessage!.id, at: new Date().toISOString() },
+    };
+    const inquiry = await prisma.$transaction(async (tx) => {
+      await tx.inquiry.updateMany({ where: { conversationId: conversation.id, status: { not: 'CLOSED' } }, data: { status: 'CLOSED' } });
+      const inquiry = await tx.inquiry.create({ data: { conversationId: conversation.id, contactId: conversation.contact?.id, status: 'OPEN' } });
+      await tx.conversation.update({ where: { id: conversation.id }, data: { status: 'OPEN', currentStage: 'START', contextJson: nextContext as Prisma.InputJsonValue } });
+      return inquiry;
+    });
+    return { ...context, restarted: true,
+      conversation: { ...conversation, contextJson: nextContext, currentStage: 'START', status: 'OPEN' },
+      activeInquiry: await this.inquiryRepository.findById(inquiry.id),
+    };
   }
 
   private async upsertInquiryContact(input: {
@@ -590,9 +650,9 @@ export class ConciergeOrchestratorService {
 
   private findPreviousOutboundMessage(context: ConciergeTurnContext): { text: string } | null {
     const messages = context.conversation?.messages ?? [];
-    const inboundIndex = messages.findIndex((message) => message.id === context.latestMessage?.id);
-    const candidates = inboundIndex > 0 ? messages.slice(0, inboundIndex) : messages;
-    const previousOutbound = [...candidates].reverse().find((message) => message.direction === 'OUTBOUND');
+    // A queued inbound can arrive before the preceding answer is generated. That answer
+    // still belongs to the visible context of this turn even if it was persisted later.
+    const previousOutbound = [...messages].reverse().find((message) => message.direction === 'OUTBOUND');
     return previousOutbound ? { text: previousOutbound.text } : null;
   }
 
@@ -609,6 +669,8 @@ export class ConciergeOrchestratorService {
       },
       activeInquiry: context.activeInquiry,
       availableCourseTypes: context.availableCourseTypes,
+      interpretation: context.interpretation,
+      restarted: context.restarted,
       campBrochureState,
       latestMessage: context.latestMessage,
       recentMessages: recentMessages.map((message) => ({
@@ -736,7 +798,14 @@ export class ConciergeOrchestratorService {
     outboundMediaUrl?: string | null;
     outboundMediaUrls?: string[] | null;
   }> {
+    if (context.interpretation?.needsClarification) return {
+      structured: { ...parsed, replyText: context.interpretation.clarificationQuestion?.trim() || '¿Puedes aclararme qué opción te interesa?',
+        missingFields: [], shouldAskFollowUp: true, shouldRefreshRecommendations: false, nextStage: context.conversation?.currentStage ?? 'START' },
+      trace: { strategy: 'single_follow_up', details: { reason: 'interpretation_needs_clarification' } },
+      outboundMediaUrls: [], outboundMediaUrl: null,
+    };
     const detectedIntent = await this.detectIntentWithTool(context);
+    const initialGreeting = detectedIntent === 'GREETING' && !context.restarted && !this.findPreviousOutboundMessage(context);
     const policySignals = await this.evaluatePolicySignalsWithTool(context);
     const requestedFamily = this.courseFamilyFromIntent(detectedIntent);
     if (detectedIntent === 'GREETING' || requestedFamily || context.availableCourseTypes
@@ -746,7 +815,7 @@ export class ConciergeOrchestratorService {
       const family = requestedFamily ?? context.activeInquiry?.family?.key;
       const initialUnknown = !family && detectedIntent === 'UNKNOWN' && !policySignals.menuWasShown;
       const asksForTypes = !family && (detectedIntent === 'ASK_AVAILABLE_PROGRAMS' || detectedIntent === 'REQUEST_QUOTE');
-      if (detectedIntent === 'GREETING' || initialUnknown || asksForTypes || !offerings.length
+      if (initialGreeting || context.restarted || initialUnknown || asksForTypes || !offerings.length
         || (family && !offerings.some((offering) => offering.familyKey === family))) {
         const unavailable = detectedIntent !== 'GREETING' && Boolean(family);
         const contact = context.activeInquiry?.contact ?? context.conversation?.contact;
@@ -755,10 +824,10 @@ export class ConciergeOrchestratorService {
         const label = conciergeFamilies.find((item) => item.key === family)?.name ?? 'esa opción';
         const introduction = unavailable
           ? `Por el momento no tenemos opciones disponibles de ${label.toLowerCase()}. Con gusto, en TKTours puedo ayudarte con estas alternativas.`
-          : detectedIntent === 'GREETING' ? greeting : `Con gusto${name ? `, ${name}` : ''}. En TKTours puedo ayudarte con estas opciones.`;
+          : initialGreeting ? greeting : `Con gusto${name ? `, ${name}` : ''}. En TKTours puedo ayudarte con estas opciones.`;
         const replyText = offerings.length
           ? `${introduction}\n\n¿Qué te gustaría explorar?\n${courseMenuText(offerings)}`
-          : `${detectedIntent === 'GREETING' ? `${greeting}\n\n` : ''}Por el momento no tengo programas ni folletos vigentes disponibles para ofrecerte. Un asesor de TKTours puede orientarte con información actualizada.`;
+          : `${initialGreeting ? `${greeting}\n\n` : ''}Por el momento no tengo programas ni folletos vigentes disponibles para ofrecerte. Un asesor de TKTours puede orientarte con información actualizada.`;
         return {
           structured: { ...parsed, replyText, missingFields: [], shouldAskFollowUp: false,
             nextStage: offerings.length ? 'START' : 'ESCALATED', shouldRefreshRecommendations: false },
@@ -767,8 +836,19 @@ export class ConciergeOrchestratorService {
         };
       }
     }
+    if (detectedIntent === 'GREETING' && !initialGreeting && !context.restarted && !this.getLanguageCourseAgeBlock(context, detectedIntent)) {
+      const nextField = this.getEnforcedNextField(context.activeInquiry);
+      if (nextField) return {
+        structured: { ...parsed, replyText: await this.buildPromptDrivenFollowUp({ context, nextField, fallbackReplyText: this.findPreviousOutboundMessage(context)?.text ?? parsed.replyText }),
+          shouldAskFollowUp: true, missingFields: [nextField], nextStage: this.mapNextStageFromField(nextField), shouldRefreshRecommendations: false },
+        trace: { strategy: 'single_follow_up', details: { reason: 'greeting_continues_active_inquiry', field: nextField } },
+        outboundMediaUrls: [], outboundMediaUrl: null,
+      };
+      return { structured: { ...parsed, replyText: '¡Hola! Seguimos con tu solicitud. ¿En qué más puedo ayudarte?', nextStage: context.conversation?.currentStage ?? 'RECOMMEND', missingFields: [], shouldAskFollowUp: false, shouldRefreshRecommendations: false },
+        trace: { strategy: 'none', details: { reason: 'greeting_preserves_context' } }, outboundMediaUrls: [], outboundMediaUrl: null };
+    }
     context = await this.hydrateInquiryFamilyFromIntent(context, detectedIntent);
-    const cityFlow = !this.getLanguageCourseAgeBlock(context, detectedIntent)
+    const cityFlow = detectedIntent !== 'GREETING' && !this.getLanguageCourseAgeBlock(context, detectedIntent)
       ? await this.applyCityResourceFlow(parsed, context) : null;
     if (cityFlow) return cityFlow;
     const enforcedField = this.getEnforcedNextField(context.activeInquiry);
@@ -821,13 +901,7 @@ export class ConciergeOrchestratorService {
     }
 
     const asksAboutOptions = detectedIntent === 'ASK_AVAILABLE_COUNTRIES' || detectedIntent === 'ASK_AVAILABLE_PROGRAMS';
-    const question = context.latestMessage?.text ?? '';
-    const previousQuestion = this.findPreviousOutboundMessage(context)?.text ?? '';
-    const asksForTypes = /\b(?:qu[eé]\s+(?:tipos|opciones)|cu[aá]les\s+(?:tienes|tienen|hay|son))\b/i.test(question);
-    const namesAnotherTopic = /\b(?:programas?|cursos?|campamentos?|pa[ií]ses|temporadas?)\b/i.test(question);
-    const asksForAccommodation = policySignals.asksAccommodationOptions
-      || (asksForTypes && !namesAnotherTopic
-        && (enforcedField === 'accommodation' || /alojamiento|hospedaje/i.test(previousQuestion)));
+    const asksForAccommodation = policySignals.asksAccommodationOptions;
     if (asksForAccommodation) {
       const accommodationOptions = await this.buildAccommodationOptionsList(context);
       return {
@@ -847,9 +921,9 @@ export class ConciergeOrchestratorService {
     const isAnsweringQuestion = parsed.replyIntent === 'ANSWER_QUESTION'
       || options.resourceContentSearchUsed
       || asksAboutOptions
-      || (options.dataToolUsed && /[¿?]/.test(context.latestMessage?.text ?? ''));
+      || context.interpretation?.isQuestion === true;
 
-    if (isAnsweringQuestion || parsed.replyIntent === 'CHANGE_TOPIC') {
+    if (isAnsweringQuestion || context.interpretation?.changesTopic || parsed.replyIntent === 'CHANGE_TOPIC') {
       const shouldGroundAnswer = isAnsweringQuestion
         && !options.dataToolUsed
         && (parsed.detectedNeed !== 'UNKNOWN' || asksAboutOptions);
@@ -1219,15 +1293,13 @@ export class ConciergeOrchestratorService {
 
   private isCampTariffQuestion(context: ConciergeTurnContext): boolean {
     return context.activeInquiry?.family?.key === 'CAMP'
-      && /semanas?\s+(?:extra|adicional)|(?:extra|adicional).*semana|paquetes?|(?:precio|cuesta|costo).*semanas?/i.test(context.latestMessage?.text ?? '');
+      && (context.interpretation?.priceQuestion === 'PACKAGE' || context.interpretation?.priceQuestion === 'EXTRA_WEEK');
   }
 
   private async buildConfirmedTariffAnswer(context: ConciergeTurnContext): Promise<string> {
     const question = context.latestMessage?.text ?? '';
-    const extra = /semanas?\s+(?:extra|adicional)|(?:extra|adicional).*semana/i.test(question);
-    const spanishNumbers: Record<string, number> = { una: 1, un: 1, dos: 2, tres: 3, cuatro: 4, cinco: 5, seis: 6, siete: 7, ocho: 8, nueve: 9, diez: 10, once: 11, doce: 12 };
-    const requested = question.match(/(\d+|una|un|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez|once|doce)\s+semanas?/i)?.[1]?.toLowerCase();
-    const weeks = requested ? Number(requested) || spanishNumbers[requested] : null;
+    const extra = context.interpretation?.priceQuestion === 'EXTRA_WEEK';
+    const weeks = context.interpretation?.requestedTariffWeeks ?? null;
     const result = await this.toolExecutor.execute('search_resource_content', {
       inquiryId: context.activeInquiry?.id, query: question,
     }) as { matches?: Array<{ resourceTitle: string; tariffs?: ResourceTariff[] }> };
@@ -1240,7 +1312,7 @@ export class ConciergeOrchestratorService {
 
   private isCampPriceQuestion(context: ConciergeTurnContext): boolean {
     return context.activeInquiry?.family?.key === 'CAMP'
-      && /\b(precios?|costos?|cu[aá]nto\s+(?:cuesta|cuestan|vale|valen)|cotizaci[oó]n)\b/i.test(context.latestMessage?.text ?? '');
+      && context.interpretation?.priceQuestion === 'PRICE';
   }
 
   private async buildConfirmedCampPriceAnswer(context: ConciergeTurnContext): Promise<string> {
@@ -1692,74 +1764,14 @@ export class ConciergeOrchestratorService {
       return { action: 'UNKNOWN', selectedSeasonKeys: [], sendAll: false };
     }
 
-    const latestMessage = context.latestMessage;
-    if (!latestMessage || latestMessage.direction !== 'INBOUND') {
-      return { action: 'UNKNOWN', selectedSeasonKeys: [], sendAll: false };
-    }
-
-    const previousOutbound = this.findPreviousOutboundMessage(context);
-    const seasonOptions = this.getCampBrochureSeasonLabels(state.candidates);
-    const hasMultipleSeasonOptions = seasonOptions.length > 1;
-    const instructions = [
-      'Clasifica la respuesta del usuario sobre un ofrecimiento de folleto PDF.',
-      'Devuelve JSON estricto con la forma {"action":"SEND|DECLINE|CLARIFY|UNKNOWN","confidence":number,"selectedSeasonKeys":string[],"sendAll":boolean}.',
-      'selectedSeasonKeys solo puede contener SUMMER, EASTER y/o WINTER.',
-      'Estado OFFERED: SEND si el usuario confirma que sí quiere que le envíen el folleto y ya dejó clara la temporada o solo hay una temporada disponible.',
-      'Puede haber varios folletos de una misma temporada. Si el usuario confirma esa temporada, comparte todos los folletos compatibles, sin pedirle que elija un único archivo.',
-      'Estado OFFERED con varias temporadas: CLARIFY si el usuario responde que sí, pero no especifica cuál quiere.',
-      'Estado OFFERED con varias temporadas: SEND si el usuario elige una o varias temporadas específicas, o si pide todas.',
-      'Estado SENT: SEND si el usuario pide que lo reenvíen, dice que no le llegó, que no ve el archivo, que lo comparta otra vez o insiste en recibir el PDF.',
-      'Si el usuario pide todo, márcalo como sendAll=true.',
-      'DECLINE: el usuario rechaza, pospone o dice que no quiere folleto.',
-      'UNKNOWN: no está claro, responde una pregunta diferente o continúa dando datos del flujo.',
-      'No inventes; usa contexto de latestMessage y previousAssistantMessage.',
-    ].join('\n');
-
-    try {
-      const response = await this.responsesClient.createTextResponse({
-        instructions,
-        input: JSON.stringify({
-          brochureState: state.status,
-          brochureTitles: state.candidates.map((candidate) => candidate.resourceTitle),
-          brochureSeasons: this.getCampBrochureSeasonLabels(state.candidates),
-          seasonOptions: seasonOptions.map((label, index) => ({
-            number: index + 1,
-            label,
-            seasonKey: this.fromSeasonLabel(label),
-          })),
-          hasMultipleSeasonOptions,
-          latestMessage: latestMessage.text,
-          previousAssistantMessage: previousOutbound?.text ?? null,
-          recentMessages: (context.conversation?.messages ?? []).slice(-10).map((message) => ({
-            direction: message.direction,
-            text: message.text,
-          })),
-        }),
-      });
-
-      const parsed = JSON.parse(response.outputText) as {
-        action?: unknown;
-        confidence?: unknown;
-        selectedSeasonKeys?: unknown;
-        sendAll?: unknown;
-      };
-      const action = parsed?.action;
-      const selectedSeasonKeys = Array.isArray(parsed?.selectedSeasonKeys)
-        ? parsed.selectedSeasonKeys.filter((item): item is string => item === 'SUMMER' || item === 'EASTER' || item === 'WINTER')
-        : [];
-      const sendAll = parsed?.sendAll === true;
-
-      if (action === 'SEND' || action === 'DECLINE' || action === 'CLARIFY' || action === 'UNKNOWN') {
-        return {
-          action,
-          selectedSeasonKeys,
-          sendAll,
-        };
-      }
-      return { action: 'UNKNOWN', selectedSeasonKeys: [], sendAll: false };
-    } catch {
-      return { action: 'UNKNOWN', selectedSeasonKeys: [], sendAll: false };
-    }
+    const interpreted = context.interpretation;
+    if (!interpreted || interpreted.needsClarification) return { action: 'UNKNOWN', selectedSeasonKeys: [], sendAll: false };
+    if (state.status === 'SENT' && !interpreted.requestsResource) return { action: 'UNKNOWN', selectedSeasonKeys: [], sendAll: false };
+    return {
+      action: interpreted.brochureAction,
+      selectedSeasonKeys: interpreted.selectedSeasonKeys.filter((key) => state.candidates.some((candidate) => candidate.seasonKeys.includes(key))),
+      sendAll: interpreted.sendAllResources,
+    };
   }
 
   private selectCampBrochureCandidatesForReply(
@@ -2090,11 +2102,10 @@ export class ConciergeOrchestratorService {
     const familyKey = inquiry?.family?.key;
     if (!countryCode || !familyKey || !['CAMP', 'LANGUAGE_COURSE'].includes(familyKey)) return null;
 
-    const latest = context.latestMessage?.text ?? '';
-    const asksForCities = /\bciudad(?:es)?\b/i.test(latest);
+    const asksForCities = context.interpretation?.asksForCities === true;
     // Answer unrelated questions first instead of trapping the customer in the city menu.
     if (!context.cityWasSelected && !context.countryWasSelected && !context.travelDateWasSelected && !asksForCities
-      && (parsed.replyIntent === 'ANSWER_QUESTION' || parsed.replyIntent === 'CHANGE_TOPIC')) return null;
+      && (context.interpretation?.isQuestion || context.interpretation?.changesTopic || parsed.replyIntent === 'ANSWER_QUESTION' || parsed.replyIntent === 'CHANGE_TOPIC')) return null;
 
     const locationSlug = inquiry?.location?.slug;
     const { cities, resources } = await new ConciergeCityResourcesService(this.toolExecutor).load({
@@ -2128,7 +2139,7 @@ export class ConciergeOrchestratorService {
     const confirmed = compatible.filter((candidate) => resourceTripCompatibility(candidate, month, year) === 'CONFIRMED');
     if (month && !confirmed.length && candidates.length) {
       const monthName = new Intl.DateTimeFormat('es-MX', { month: 'long', timeZone: 'UTC' }).format(new Date(Date.UTC(2000, month - 1, 1)));
-      const maintainMonth = /(?:prefiero|mantener|mantengo|seguir|quedarme).*(?:enero|febrero|marzo|abril|mayo|junio|julio|agosto|septiembre|octubre|noviembre|diciembre)|(?:asesor|seguimiento)/i.test(latest);
+      const maintainMonth = context.interpretation?.maintainTravelMonth === true;
       if (maintainMonth) return {
         structured: { ...parsed, replyText: `Mantendremos tu preferencia por ${monthName}${year ? ` de ${year}` : ''}. Un asesor de TKTours dará seguimiento para confirmar opciones para esas fechas.`, missingFields: [], shouldAskFollowUp: false, nextStage: 'ESCALATED', shouldRefreshRecommendations: false },
         trace: { strategy: 'none', details: { reason: 'requested_month_advisor_follow_up' } },
@@ -2142,7 +2153,7 @@ export class ConciergeOrchestratorService {
         contextPatch: {}, outboundMediaUrls: [], outboundMediaUrl: null,
       };
     }
-    const requestsBrochure = explicitlyRequestsResource(latest);
+    const requestsBrochure = context.interpretation?.requestsResource === true;
     const pending = inquiry?.id
       ? await new ResourceSendHistoryService().pendingVersions(inquiry.id, compatible, requestsBrochure)
       : compatible;
@@ -2250,10 +2261,8 @@ export class ConciergeOrchestratorService {
       | 'ASK_CIRCUITS'
       | 'UNKNOWN'
   > {
+    if (context.interpretation) return context.interpretation.intent === 'RESTART' ? 'GREETING' : context.interpretation.intent;
     const latestMessage = context.latestMessage?.text ?? '';
-    const choice = displayedCourseChoice(latestMessage, this.findPreviousOutboundMessage(context)?.text ?? null);
-    if (choice) return choice === 'LANGUAGE_COURSE' ? 'MENU_OPTION_1' : choice === 'CAMP' ? 'MENU_OPTION_2' : 'MENU_OPTION_3';
-    if (context.cityWasSelected || /^\d{1,2}[.)]?$/.test(latestMessage.trim())) return 'UNKNOWN';
     const recentMessages = (context.conversation?.messages ?? [])
       .slice(-12)
       .map((message) => ({
@@ -2319,6 +2328,7 @@ export class ConciergeOrchestratorService {
     confidence: number;
     needsClarification: boolean;
   }> {
+    if (context.interpretation) return { ...context.interpretation, resolvedCountryCode: context.interpretation.countryCode as 'CA' | null };
     const latestMessage = context.latestMessage?.text ?? '';
     const previousOutbound = this.findPreviousOutboundMessage(context);
     const recentMessages = (context.conversation?.messages ?? [])

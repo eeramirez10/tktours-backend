@@ -1,3 +1,4 @@
+import { interpretation } from '../../../../scripts/fixtures/concierge-interpretation.js';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
@@ -163,7 +164,7 @@ test('a camp price question only uses a complete price from a compatible brochur
       family: { key: 'CAMP' }, country: { code: 'CA', name: 'Canadá' },
       studentAge: 15, program: { slug: 'canada-camp' }, location: null,
     },
-    latestMessage: { text: '¿Cuánto cuesta el campamento?' },
+    interpretation: interpretation({ priceQuestion: 'PRICE' }), latestMessage: { text: '¿Cuánto cuesta el campamento?' },
   } as unknown as ConciergeTurnContext;
 
   assert.equal(orchestrator.isCampPriceQuestion(context), true);
@@ -226,8 +227,11 @@ test('a self-introduction updates the conversation contact before an inquiry exi
   };
   orchestrator.toolExecutor = {
     execute: async (name) => {
-      assert.equal(name, 'extract_inquiry_fields');
-      return { firstName: 'Alex', lastName: 'Meine' };
+      if (name === 'list_available_locations') return { locations: [] };
+    if (name === 'list_available_programs') return { programs: [] };
+      if (name === 'list_available_course_types') return { courseTypes: [] };
+      assert.equal(name, 'interpret_message');
+      return interpretation({ firstName: 'Alex', lastName: 'Meine' });
     },
   };
   orchestrator.upsertInquiryContact = async (input) => { updates.push(input); };
@@ -380,15 +384,15 @@ test('extra-week and package answers preserve registered duration and modality w
     { kind: 'EXTRA_WEEK', weeks: null, modality: 'Residencia', amount: 900, currency: 'CAD' },
     { kind: 'EXTRA_WEEK', weeks: null, modality: 'Familia', amount: 700, currency: 'CAD' },
   ] }] }) };
-  const context = (text: string) => ({ activeInquiry: { id: 'inquiry' }, latestMessage: { text } });
-  const extra = await orchestrator.buildConfirmedTariffAnswer(context('¿Cuánto cuesta una semana adicional?'));
+  const context = (text: string, priceQuestion: 'EXTRA_WEEK' | 'PACKAGE', requestedTariffWeeks: number | null = null) => ({ activeInquiry: { id: 'inquiry' }, latestMessage: { text }, interpretation: interpretation({ priceQuestion, requestedTariffWeeks }) });
+  const extra = await orchestrator.buildConfirmedTariffAnswer(context('¿Cuánto cuesta una semana adicional?', 'EXTRA_WEEK'));
   assert.match(extra, /900 CAD por semana adicional, modalidad Residencia/);
   assert.match(extra, /700 CAD por semana adicional, modalidad Familia/);
   assert.doesNotMatch(extra, /3 semanas|3,700|4,000|2,800/);
-  const three = await orchestrator.buildConfirmedTariffAnswer(context('¿Cuál es el precio del paquete de tres semanas?'));
+  const three = await orchestrator.buildConfirmedTariffAnswer(context('¿Cuál es el precio del paquete de tres semanas?', 'PACKAGE', 3));
   assert.match(three, /4,000 CAD por el paquete de 3 semanas/);
   assert.doesNotMatch(three, /3,700|900|2,800/);
-  const absent = await orchestrator.buildConfirmedTariffAnswer(context('Precio del paquete de 4 semanas'));
+  const absent = await orchestrator.buildConfirmedTariffAnswer(context('Precio del paquete de 4 semanas', 'PACKAGE', 4));
   assert.match(absent, /No tengo una tarifa confirmada/);
   assert.doesNotMatch(absent, /4,900|4,000|900/);
 });

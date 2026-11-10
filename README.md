@@ -238,9 +238,13 @@ Hoy el assistant puede usar tools como:
 
 - `find_matching_programs`
 - `get_program_detail`
-- `update_inquiry`
+- `list_destination_overview`
+- `list_available_resources`
+- `search_resource_content`
 
-La intención es que el modelo consulte datos reales en vez de improvisar.
+Antes de generar la respuesta, la herramienta interna `interpret_message` interpreta el mensaje con salida estructurada estricta: recibe historial visible, solicitud, catálogo y menú mostrado. Valida país, familia, ciudad y programa; guarda datos y contacto antes de generar la respuesta. La ambigüedad produce una pregunta de aclaración. Los saludos conservan la solicitud; solo un reinicio explícito interpretado crea otra.
+
+El modelo de respuesta consulta información confirmada; las modificaciones de la solicitud provienen de la interpretación validada. `previous_response_id` y los mensajes permanecen guardados. Solo un error explícito de referencia inexistente permite reconstruir la cadena desde el historial, dejando traza `context_recovery`; un timeout o error de red no borra la referencia.
 
 ## Seed inicial
 
@@ -292,9 +296,11 @@ Flujo implementado para webhook inbound:
 
 1. Meta envía eventos firmados a `POST /webhooks/meta/whatsapp`.
 2. El backend verifica `X-Hub-Signature-256`, crea/recupera el contacto por `waId` y abre la conversación `WHATSAPP`.
-3. Persiste el mensaje inbound usando el identificador `wamid` de Meta.
-4. Ejecuta `concierge.runTurn`.
-5. Envía texto y PDFs por Cloud API y conserva los estados de entrega.
+3. Confirma en una transacción el mensaje inbound (deduplicado por `wamid`), la fecha de la conversación, la solicitud y un trabajo `WhatsAppInboundJob`. Publica el evento del panel inmediatamente después del commit. Solo entonces devuelve HTTP 200; una falla de persistencia devuelve error para que Meta reintente.
+4. El worker del servidor procesa los trabajos persistidos en orden por conversación. La cola pendiente sobrevive al reinicio; los turnos del mismo proceso también se serializan entre instancias del orquestador.
+5. Envía texto y PDFs por Cloud API y conserva los estados de entrega. Los fallos quedan registrados y los mensajes recibidos permanecen visibles. Una interrupción de un trabajo en curso se detecta por su lease y se marca para revisión; no se reenvía automáticamente un resultado de transporte incierto.
+
+Aplica la migración `20261110120000_whatsapp_durable_inbox` antes de iniciar esta versión en otro entorno. La migración no reconstruye mensajes ni trabajos históricos ausentes. El historial de envíos sigue bloqueando reenvíos automáticos por solicitud y versión.
 
 ### Setup rápido
 
@@ -306,6 +312,21 @@ Flujo implementado para webhook inbound:
 6. Revisa trazas:
    - `GET /api/concierge/turns`
    - `GET /api/conversations`
+
+## Verificación de recepción y continuidad
+
+`pnpm test` ejecuta las pruebas deterministas con dobles de IA y transporte, incluidas las reglas de fechas, tarifas y archivos. La prueba de integración de la bandeja se omite salvo activación explícita.
+
+Para comprobar transacciones, deduplicación y orden contra PostgreSQL desechable:
+
+```bash
+docker run --detach --rm --name tktours-inbox-test -e POSTGRES_PASSWORD=test-only -e POSTGRES_DB=tktours_test -p 127.0.0.1:55432:5432 postgres:17-alpine
+DATABASE_URL=postgresql://postgres:test-only@127.0.0.1:55432/tktours_test pnpm exec prisma migrate deploy
+DATABASE_URL=postgresql://postgres:test-only@127.0.0.1:55432/tktours_test pnpm test:inbox
+docker stop tktours-inbox-test
+```
+
+La prueba de integración exige una URL local con base terminada en `_test`. No llama a Meta ni a OpenAI.
 
 ## Scripts
 

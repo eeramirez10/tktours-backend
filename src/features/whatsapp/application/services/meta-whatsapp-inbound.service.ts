@@ -1,3 +1,4 @@
+import { KeyedTaskQueue } from '../../../../shared/application/keyed-task-queue.js';
 import { ValidationAppError } from '../../../../shared/domain/errors/app-error.js';
 import { ResourceSendHistoryService } from '../../../resources/application/services/resource-send-history.service.js';
 import { ResourceDeliveryGuardService } from '../../../resources/application/services/resource-delivery-guard.service.js';
@@ -13,37 +14,39 @@ import type { MetaWhatsAppWebhookBody } from '../../presentation/http/schemas/me
 import { WhatsappConversationThreadService } from './whatsapp-conversation-thread.service.js';
 import { MetaWhatsAppStatusService } from './meta-whatsapp-status.service.js';
 
+const inboundMessageSchema = z.object({
+  from: z.string().trim().min(1),
+  id: z.string().trim().min(1),
+  timestamp: z.string().trim().min(1),
+  type: z.string().trim().min(1),
+  text: z.object({ body: z.string() }).optional(),
+}).passthrough();
+
+const statusCallbackSchema = z.object({
+  id: z.string().trim().min(1),
+  status: z.string().trim().min(1),
+  timestamp: z.string().trim().min(1),
+  recipient_id: z.string().trim().min(1).optional(),
+  errors: z.array(z.unknown()).optional(),
+}).passthrough();
+
+const contactSchema = z.object({
+  wa_id: z.string().trim().min(1),
+  profile: z.object({ name: z.string().optional() }).optional(),
+});
+
 const metaMessagesValueSchema = z.object({
   messaging_product: z.literal('whatsapp'),
   metadata: z.object({
     display_phone_number: z.string().optional(),
     phone_number_id: z.string().trim().min(1),
   }),
-  contacts: z.array(
-    z.object({
-      wa_id: z.string().trim().min(1),
-      profile: z.object({ name: z.string().trim().min(1).optional() }).optional(),
-    }),
-  ).optional(),
-  messages: z.array(
-    z.object({
-      from: z.string().trim().min(1),
-      id: z.string().trim().min(1),
-      timestamp: z.string().trim().min(1),
-      type: z.string().trim().min(1),
-      text: z.object({ body: z.string() }).optional(),
-    }).passthrough(),
-  ).optional(),
-  statuses: z.array(
-    z.object({
-      id: z.string().trim().min(1),
-      status: z.string().trim().min(1),
-      timestamp: z.string().trim().min(1),
-      recipient_id: z.string().trim().min(1).optional(),
-      errors: z.array(z.unknown()).optional(),
-    }).passthrough(),
-  ).optional(),
+  contacts: z.array(z.unknown()).optional(),
+  messages: z.array(z.unknown()).optional(),
+  statuses: z.array(z.unknown()).optional(),
 }).passthrough();
+
+const inboundPersistenceQueue = new KeyedTaskQueue();
 
 type MetaMessagesValue = z.infer<typeof metaMessagesValueSchema>;
 
@@ -78,11 +81,37 @@ export class MetaWhatsAppInboundService {
   }
 
   private async processMessagesValue(value: MetaMessagesValue): Promise<void> {
-    const contactNames = new Map(
-      (value.contacts ?? []).map((contact) => [contact.wa_id, contact.profile?.name?.trim() || null]),
-    );
+    const contactNames = new Map<string, string | null>();
+    for (const rawContact of value.contacts ?? []) {
+      const contact = contactSchema.safeParse(rawContact);
+      if (contact.success) contactNames.set(contact.data.wa_id, contact.data.profile?.name?.trim() || null);
+    }
 
-    for (const status of value.statuses ?? []) {
+    for (const rawMessage of value.messages ?? []) {
+      const parsedMessage = inboundMessageSchema.safeParse(rawMessage);
+      if (!parsedMessage.success) {
+        logger.warn({ issues: parsedMessage.error.flatten() }, 'ignored invalid Meta WhatsApp message');
+        continue;
+      }
+      const message = parsedMessage.data;
+      await inboundPersistenceQueue.run(message.from, () => this.persistInboundMessage({
+        providerMessageId: message.id,
+        providerTimestamp: message.timestamp,
+        from: message.from,
+        profileName: contactNames.get(message.from) ?? null,
+        bodyText: message.type === 'text' ? message.text?.body?.trim() || '[sin texto]' : `[mensaje ${message.type}]`,
+        messageType: message.type,
+        phoneNumberId: value.metadata.phone_number_id,
+      }));
+    }
+
+    for (const rawStatus of value.statuses ?? []) {
+      const parsedStatus = statusCallbackSchema.safeParse(rawStatus);
+      if (!parsedStatus.success) {
+        logger.warn({ issues: parsedStatus.error.flatten() }, 'ignored invalid Meta WhatsApp status callback');
+        continue;
+      }
+      const status = parsedStatus.data;
       await this.statusService.processStatusCallback({
         id: status.id,
         status: status.status,
@@ -91,21 +120,11 @@ export class MetaWhatsAppInboundService {
         errors: status.errors,
       });
     }
-
-    for (const message of value.messages ?? []) {
-      await this.processInboundMessage({
-        providerMessageId: message.id,
-        from: message.from,
-        profileName: contactNames.get(message.from) ?? null,
-        bodyText: message.type === 'text' ? message.text?.body?.trim() || '[sin texto]' : `[mensaje ${message.type}]`,
-        messageType: message.type,
-        phoneNumberId: value.metadata.phone_number_id,
-      });
-    }
   }
 
-  private async processInboundMessage(params: {
+  private async persistInboundMessage(params: {
     providerMessageId: string;
+    providerTimestamp: string;
     from: string;
     profileName: string | null;
     bodyText: string;
@@ -123,44 +142,28 @@ export class MetaWhatsAppInboundService {
     const conversation = await this.threadService.getOrCreateThread(contact.id);
     const inboundMessage = await this.createInboundMessage({
       conversationId: conversation.id,
+      contactId: contact.id,
       providerMessageId: params.providerMessageId,
+      recipientWaId: waId,
+      processWithAi: conversation.controlMode === 'AI',
       text: params.bodyText,
       metadata: {
-        source: 'meta-whatsapp-webhook',
-        rawFrom: params.from,
-        profileName: params.profileName,
-        messageType: params.messageType,
-        phoneNumberId: params.phoneNumberId,
+        source: 'meta-whatsapp-webhook', rawFrom: params.from, profileName: params.profileName,
+        messageType: params.messageType, phoneNumberId: params.phoneNumberId, providerTimestamp: params.providerTimestamp,
       },
     });
-
     if (!inboundMessage) {
       logger.info({ messageId: params.providerMessageId }, 'meta whatsapp inbound duplicate ignored');
       return;
     }
+    conversationRealtimeHub.publish({ type: 'conversation.message.received', conversationId: conversation.id, messageId: inboundMessage.id });
+  }
 
-    await prisma.conversation.update({
-      where: { id: conversation.id },
-      data: { lastMessageAt: inboundMessage.createdAt },
-    });
-
-    await this.ensureOpenInquiry(conversation.id, contact.id);
-
-    conversationRealtimeHub.publish({
-      type: 'conversation.message.received',
-      conversationId: conversation.id,
-      messageId: inboundMessage.id,
-    });
-
-    if (conversation.controlMode === 'HUMAN') {
-      conversationRealtimeHub.publish({
-        type: 'conversation.updated',
-        conversationId: conversation.id,
-        messageId: inboundMessage.id,
-      });
-      return;
-    }
-
+  async processPersistedMessage(job: { conversationId: string; messageId: string; recipientWaId: string }): Promise<void> {
+    const conversation = await prisma.conversation.findUniqueOrThrow({ where: { id: job.conversationId }, select: { id: true, controlMode: true } });
+    if (conversation.controlMode === 'HUMAN') return;
+    const inboundMessage = { id: job.messageId };
+    const waId = job.recipientWaId;
     conversationRealtimeHub.publish({
       type: 'concierge.processing',
       conversationId: conversation.id,
@@ -282,37 +285,35 @@ export class MetaWhatsAppInboundService {
     return outboundMessage?.mediaUrl && /^https?:\/\//i.test(outboundMessage.mediaUrl) ? [outboundMessage.mediaUrl] : [];
   }
 
-  private async ensureOpenInquiry(conversationId: string, contactId: string): Promise<void> {
-    const openInquiry = await prisma.inquiry.findFirst({
-      where: { conversationId, status: { not: 'CLOSED' } },
-      select: { id: true },
-      orderBy: [{ updatedAt: 'desc' }],
-    });
-
-    if (!openInquiry) {
-      await prisma.inquiry.create({
-        data: { conversationId, contactId, status: 'OPEN' },
-        select: { id: true },
-      });
-    }
-  }
-
   private async createInboundMessage(params: {
     conversationId: string;
     providerMessageId: string;
+    contactId: string;
+    recipientWaId: string;
+    processWithAi: boolean;
     text: string;
     metadata: Record<string, unknown>;
   }): Promise<{ id: string; createdAt: Date } | null> {
     try {
-      return await prisma.message.create({
-        data: {
-          conversationId: params.conversationId,
-          direction: 'INBOUND',
-          text: params.text,
-          providerMessageId: params.providerMessageId,
-          metadata: toNullableJsonInput(params.metadata),
-        },
-        select: { id: true, createdAt: true },
+      return await prisma.$transaction(async (tx) => {
+        // The contact row serializes thread/inquiry creation across webhook requests.
+        await tx.$queryRaw`SELECT "id" FROM "Contact" WHERE "id" = ${params.contactId}::uuid FOR UPDATE`;
+        const duplicate = await tx.message.findUnique({ where: { providerMessageId: params.providerMessageId }, select: { id: true } });
+        if (duplicate) return null;
+        const message = await tx.message.create({ data: {
+          conversationId: params.conversationId, direction: 'INBOUND', text: params.text,
+          providerMessageId: params.providerMessageId, metadata: toNullableJsonInput(params.metadata),
+        }, select: { id: true, createdAt: true } });
+        await tx.conversation.updateMany({ where: { id: params.conversationId, OR: [{ lastMessageAt: null }, { lastMessageAt: { lt: message.createdAt } }] }, data: { lastMessageAt: message.createdAt } });
+        const openInquiry = await tx.inquiry.findFirst({ where: { conversationId: params.conversationId, status: { not: 'CLOSED' } }, select: { id: true } });
+        if (!openInquiry) await tx.inquiry.create({ data: { conversationId: params.conversationId, contactId: params.contactId, status: 'OPEN' } });
+        if (params.processWithAi) {
+          const job = await tx.whatsAppInboundJob.create({ data: {
+            messageId: message.id, conversationId: params.conversationId, recipientWaId: params.recipientWaId,
+          } });
+          await tx.message.update({ where: { id: message.id }, data: { metadata: toNullableJsonInput({ ...params.metadata, inboxJobId: job.id.toString() }) } });
+        }
+        return message;
       });
     } catch (error) {
       if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {

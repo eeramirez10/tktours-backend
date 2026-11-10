@@ -9,7 +9,6 @@ import { ValidationAppError } from '../../../../../shared/domain/errors/app-erro
 import { MetaWhatsAppInboundService } from '../../../application/services/meta-whatsapp-inbound.service.js';
 import { metaWhatsAppWebhookBodySchema } from '../schemas/meta-whatsapp-webhook.schemas.js';
 
-const service = new MetaWhatsAppInboundService();
 
 function toValidationError(error: ZodError, message: string) {
   return new ValidationAppError(message, error.flatten());
@@ -32,6 +31,8 @@ function isValidSignature(req: Request): boolean {
 }
 
 export class MetaWhatsAppController {
+  constructor(private readonly service = new MetaWhatsAppInboundService()) {}
+
   getHealth(_req: Request, res: Response) {
     return res.json({
       ok: true,
@@ -68,10 +69,8 @@ export class MetaWhatsAppController {
 
       const payload = metaWhatsAppWebhookBodySchema.parse(req.body);
 
-      // Meta expects a fast acknowledgement; process the turn after returning 200.
-      void service.processWebhook(payload).catch((error) => {
-        logger.error({ error }, 'meta whatsapp inbound processing failed');
-      });
+      // Acknowledge only committed messages. AI processing runs from the durable inbox.
+      await this.service.processWebhook(payload);
 
       return res.sendStatus(200);
     } catch (error) {

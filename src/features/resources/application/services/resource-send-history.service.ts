@@ -2,12 +2,6 @@ import { randomUUID } from 'node:crypto';
 import { prisma } from '../../../../shared/infrastructure/database/prisma.js';
 
 type Version = { resourceId: string; versionId: string; url?: string };
-export function explicitlyRequestsResource(text: string): boolean {
-  if (/(?:no|nunca)\s+(?:me\s+)?(?:mand|env|compart|quier|muestr|pas)/i.test(text)) return false;
-  if (/reenv[ií](?:a|e)|(?:env[ií]a|manda|comparte|p[aá]sa)(?:me)?lo.*(?:otra vez|de nuevo)|(?:otra vez|de nuevo).*(?:env[ií]a|manda|comparte)/i.test(text)) return true;
-  return /(?:manda|env[ií]a|comparte|reenv[ií]a|quiero|muestra|p[aá]sa|dame).*(?:folleto|brochure|pdf|archivo)|(?:folleto|brochure|pdf|archivo).*(?:otra vez|de nuevo|por favor)/i.test(text);
-}
-
 // UNKNOWN legacy records, reservations and accepted requests all block automatic resends.
 // Only a recorded transport failure or a new explicit customer request permits a retry.
 export class ResourceSendHistoryService {

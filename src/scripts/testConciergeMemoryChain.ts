@@ -1,3 +1,4 @@
+import { interpretation } from './fixtures/concierge-interpretation.js';
 import assert from 'node:assert/strict';
 
 import { prisma } from '../shared/infrastructure/database/prisma.js';
@@ -60,7 +61,14 @@ async function main() {
   const service = new ConciergeOrchestratorService();
   const fakeClient = new FakeResponsesClient();
 
-  // Replace real OpenAI client to keep this test deterministic and offline.
+  // Keep both interpretation and response generation deterministic and offline.
+  (service as unknown as { toolExecutor: object }).toolExecutor = { execute: async (name: string) => {
+    if (name === 'list_available_course_types') return { courseTypes: [{ familyKey: 'LANGUAGE_COURSE', name: 'Cursos de idiomas', programCount: 1, brochureCount: 0 }] };
+    if (name === 'list_available_locations') return { locations: [] };
+    if (name === 'list_available_programs') return { programs: [] };
+    if (name === 'interpret_message') return interpretation();
+    throw new Error(`Unexpected tool: ${name}`);
+  } };
   (service as unknown as { responsesClient: FakeResponsesClient }).responsesClient = fakeClient;
 
   try {

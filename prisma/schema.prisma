@@ -451,6 +451,7 @@ model Message {
   readByAdminAt        DateTime?
   notificationSeenAt   DateTime?
   conversation         Conversation     @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  whatsappInboundJob   WhatsAppInboundJob?
   conciergeTurnInputs  ConciergeTurn[]  @relation("ConciergeTurnIncomingMessage")
   createdAt            DateTime         @default(now())
 
@@ -567,4 +568,21 @@ model ConciergeToolCall {
 
   @@unique([turnId, callId])
   @@index([turnId, startedAt])
+}
+
+// Durable inbox: acknowledgement means both the message and its processing job were committed.
+model WhatsAppInboundJob {
+  id             BigInt    @id @default(autoincrement())
+  messageId      String    @unique @db.Uuid
+  conversationId String    @db.Uuid
+  recipientWaId  String
+  status         String    @default("PENDING")
+  lockedAt       DateTime?
+  errorMessage   String?
+  createdAt      DateTime  @default(now())
+  finishedAt     DateTime?
+  message        Message   @relation(fields: [messageId], references: [id], onDelete: Cascade)
+
+  @@index([status, id])
+  @@index([conversationId, status, id])
 }

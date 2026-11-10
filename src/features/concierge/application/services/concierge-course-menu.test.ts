@@ -1,6 +1,7 @@
+import { interpretation } from '../../../../scripts/fixtures/concierge-interpretation.js';
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { courseMenuText, displayedCourseChoice, type CourseOffering } from '../../domain/course-offerings.js';
+import { courseMenuText, type CourseOffering } from '../../domain/course-offerings.js';
 import { ConciergeOrchestratorService, type ConciergeTurnContext } from './concierge-orchestrator.service.js';
 import { ConciergeToolExecutorService } from './concierge-tool-executor.service.js';
 import { prisma } from '../../../../shared/infrastructure/database/prisma.js';
@@ -11,11 +12,7 @@ const languages: CourseOffering = { familyKey: 'LANGUAGE_COURSE', name: 'Cursos 
 test('displayed menu numbering follows available families instead of fixed positions', () => {
   const menu = courseMenuText([camps]);
   assert.equal(menu, '1) Campamentos / viajes');
-  assert.equal(displayedCourseChoice('1', menu), 'CAMP');
-  assert.equal(displayedCourseChoice('2', courseMenuText([camps, { ...languages, familyKey: 'SCHOOL_PROGRAM', name: 'Circuitos por el mundo' }])), 'SCHOOL_PROGRAM');
-  assert.equal(displayedCourseChoice('1', 'Opciones disponibles:\n1) Canadá\n2) Italia'), null);
-  assert.equal(displayedCourseChoice('3', menu), null);
-  assert.equal(displayedCourseChoice('tengo 1 semana', menu), null);
+
 });
 
 test('course-type tool excludes empty families and inactive programs or destinations', async () => {
@@ -110,27 +107,27 @@ test('a requested unavailable course type shows real alternatives without enteri
   assert.equal(result.trace.details.reason, 'course_type_unavailable');
 });
 
-test('numeric intent is resolved deterministically from the last displayed menu', async () => {
-  const service = policy('MENU_OPTION_1');
-  assert.equal(await service.detectIntentWithTool(context('1', [camps], courseMenuText([camps]))), 'MENU_OPTION_2');
-  assert.equal(await service.detectIntentWithTool(context('1', [languages], courseMenuText([languages]))), 'MENU_OPTION_1');
+test('intent uses the contextual AI interpretation rather than fixed menu positions', async () => {
+  const turn = context('1', [camps], courseMenuText([camps]));
+  turn.interpretation = interpretation({ intent: 'ASK_CAMPS', familyKey: 'CAMP' });
+  assert.equal(await policy('MENU_OPTION_1').detectIntentWithTool(turn), 'ASK_CAMPS');
 });
 
 test('a course removed after showing the menu is rejected instead of interpreting the number as another type', async () => {
-  const result = await policy('MENU_OPTION_1').applyReplyPolicy(parsed, context('1', [languages], courseMenuText([camps])), {});
+  const result = await policy('ASK_CAMPS').applyReplyPolicy(parsed, context('1', [languages], courseMenuText([camps])), {});
   assert.match(result.structured.replyText, /no tenemos opciones disponibles de campamentos/);
   assert.match(result.structured.replyText, /1\) Cursos de idiomas/);
   assert.equal(result.trace.details.reason, 'course_type_unavailable');
 });
 
-test('inquiry extraction cannot override a dynamically numbered menu choice', async () => {
+test('a contextual AI menu choice is saved before reply generation', async () => {
   let familyKey: unknown;
   const service = Object.create(ConciergeOrchestratorService.prototype) as {
     toolExecutor: { execute: () => Promise<object> };
     inquiryRepository: { update: (args: { familyKey?: unknown }) => Promise<void>; findById: () => Promise<object> };
     hydrateInquiryFromLatestMessage: (context: ConciergeTurnContext) => Promise<ConciergeTurnContext>;
   };
-  service.toolExecutor = { execute: async () => ({ familyKey: 'LANGUAGE_COURSE' }) };
+  service.toolExecutor = { execute: async (name: string) => name === 'list_available_locations' ? { locations: [] } : name === 'list_available_programs' ? { programs: [] } : interpretation({ familyKey: 'CAMP', intent: 'ASK_CAMPS' }) } as never;
   service.inquiryRepository = {
     update: async (args) => { familyKey = args.familyKey; },
     findById: async () => ({ id: 'inquiry', family: { key: 'CAMP' } }),
@@ -178,12 +175,14 @@ test('the complete greeting turn loads current offerings and persists only the v
     {
       execute: async (name: string) => {
         if (name === 'list_available_course_types') return { courseTypes: [camps] };
-        if (name === 'extract_inquiry_fields') return {};
+        if (name === 'interpret_message') return interpretation({ intent: 'GREETING', menuWasShown: false });
+        if (name === 'list_available_locations') return { locations: [] };
+    if (name === 'list_available_programs') return { programs: [] };
         if (name === 'detect_user_intent') return { intent: 'GREETING' };
         return { menuWasShown: false, handoffStep: 'none' };
       },
     } as never,
-    { createTurn: async () => ({ id: 'turn' }), completeTurn: async () => {}, failTurn: async () => {} } as never,
+    { createTurn: async () => ({ id: 'turn' }), createToolCall: async () => {}, completeToolCall: async () => {}, failToolCall: async () => {}, completeTurn: async () => {}, failTurn: async () => {} } as never,
   );
   await service.runTurn({ conversationId: 'conversation', incomingMessageId: 'incoming' });
   assert.match(modelInput, /availableCourseTypes/);

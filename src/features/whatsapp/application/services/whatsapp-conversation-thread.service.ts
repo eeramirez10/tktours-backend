@@ -32,22 +32,13 @@ export type ConsolidateWhatsappThreadsResult = {
 
 export class WhatsappConversationThreadService {
   async getOrCreateThread(contactId: string): Promise<{ id: string; controlMode: 'AI' | 'HUMAN' }> {
-    const conversations = await this.findThreadsByContact(contactId);
-
-    if (conversations.length === 0) {
-      return prisma.conversation.create({
-        data: {
-          contactId,
-          channel: 'WHATSAPP',
-          status: 'OPEN',
-          currentStage: 'START',
-          contextJson: {
-            source: 'meta-whatsapp-webhook',
-          },
-        },
-        select: { id: true, controlMode: true },
-      });
-    }
+    const conversations = await prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT "id" FROM "Contact" WHERE "id" = ${contactId}::uuid FOR UPDATE`;
+      const existing = await tx.conversation.findMany({ where: { contactId, channel: 'WHATSAPP' },
+        orderBy: [{ lastMessageAt: 'desc' }, { updatedAt: 'desc' }, { createdAt: 'desc' }], select: threadSelect });
+      if (existing.length) return existing;
+      return [await tx.conversation.create({ data: { contactId, channel: 'WHATSAPP', status: 'OPEN', currentStage: 'START', contextJson: { source: 'meta-whatsapp-webhook' } }, select: threadSelect })];
+    });
 
     const canonical = conversations[0];
     const duplicates = conversations.slice(1);
@@ -206,27 +197,19 @@ export class WhatsappConversationThreadService {
         whatsappThread: {
           ...(toJsonObject(toJsonObject(conversation.contextJson)?.whatsappThread) ?? {}),
           reopenedAt: new Date().toISOString(),
-          restartedFromClosedThread: true,
+          reopenedWithoutReset: true,
         },
       };
 
-      await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
-        await tx.inquiry.updateMany({
-          where: {
-            conversationId: conversation.id,
-            status: { not: 'CLOSED' },
-          },
-          data: { status: 'CLOSED' },
-        });
-
-        await tx.conversation.update({
-          where: { id: conversation.id },
-          data: {
-            status: 'OPEN',
-            currentStage: 'START',
-            contextJson: toNullableJsonInput(nextContext),
-          },
-        });
+      await prisma.$transaction(async (tx) => {
+        const latestInquiry = await tx.inquiry.findFirst({ where: { conversationId: conversation.id }, orderBy: { createdAt: 'desc' }, select: { id: true, status: true } });
+        if (latestInquiry?.status === 'CLOSED') {
+          await tx.inquiry.update({ where: { id: latestInquiry.id }, data: { status: 'WAITING_HUMAN' } });
+        }
+        await tx.conversation.update({ where: { id: conversation.id }, data: {
+          status: 'OPEN', currentStage: conversation.currentStage === 'CLOSED' ? 'ESCALATED' : conversation.currentStage,
+          contextJson: toNullableJsonInput(nextContext),
+        } });
       });
 
       return true;
