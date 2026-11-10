@@ -12,6 +12,7 @@ import { requireAdminAuth } from '../../../../features/auth/presentation/http/mi
 import { healthRoute } from './health.route.js';
 import { conciergeRoutes } from '../../../../features/concierge/presentation/http/routes/concierge.routes.js';
 import { metaWhatsAppRoutes } from '../../../../features/whatsapp/presentation/http/routes/meta-whatsapp.routes.js';
+import { whatsappAccountRoutes } from '../../../../features/whatsapp/presentation/http/routes/whatsapp-account.routes.js';
 
 export const apiRouter = Router();
 
@@ -20,6 +21,7 @@ apiRouter.use(metaWhatsAppRoutes);
 apiRouter.use('/api/auth', adminAuthRoutes);
 apiRouter.use('/api', publicResourceDownloadRoutes);
 apiRouter.use('/api', requireAdminAuth);
+apiRouter.use('/api', whatsappAccountRoutes);
 apiRouter.use('/api', catalogRoutes);
 apiRouter.use('/api', resourcesRoutes);
 apiRouter.use('/api', inquiriesRoutes);
