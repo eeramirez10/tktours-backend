@@ -161,6 +161,7 @@ test('the complete greeting turn loads current offerings and persists only the v
   const service = new ConciergeOrchestratorService(
     {
       findById: async () => conversation,
+      persistConciergeOutcome: async (args: { replyText: string }) => { persistedText = args.replyText; },
       createMessage: async (args: { text: string }) => { persistedText = args.text; return conversation; },
       update: async () => conversation,
     } as never,

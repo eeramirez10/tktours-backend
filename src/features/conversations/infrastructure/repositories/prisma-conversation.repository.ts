@@ -1,3 +1,5 @@
+import { env } from '../../../../shared/config/env.js';
+import { inquiryProgress } from '../../../inquiries/domain/services/inquiry-progress.js';
 import { Prisma } from '@prisma/client';
 
 import { NotFoundAppError } from '../../../../shared/domain/errors/app-error.js';
@@ -10,6 +12,7 @@ import type {
   CreateMessageInput,
   ListConversationsQuery,
   UpdateConversationInput,
+  PersistConciergeOutcomeInput,
 } from '../../domain/types/conversation.types.js';
 
 const conversationSelect = {
@@ -31,10 +34,11 @@ const conversationSelect = {
       email: true,
       phone: true,
       city: true,
+      notes: true,
     },
   },
   inquiries: {
-    orderBy: { createdAt: 'desc' },
+    orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
     select: {
       id: true,
       status: true,
@@ -45,12 +49,16 @@ const conversationSelect = {
       weeks: true,
       notes: true,
       qualificationJson: true,
+      updatedAt: true,
+      contact: { select: { firstName: true, lastName: true, email: true } },
+      recommendations: { orderBy: { createdAt: 'asc' }, include: { program: true, resource: true } },
+      resourceSends: { orderBy: { sentAt: 'asc' }, include: { resourceVersion: true, resource: true } },
       createdAt: true,
-      country: { select: { name: true } },
-      family: { select: { name: true } },
-      location: { select: { name: true } },
-      program: { select: { name: true } },
-      accommodationType: { select: { name: true } },
+      country: { select: { name: true, code: true } },
+      family: { select: { name: true, key: true } },
+      location: { select: { name: true, slug: true } },
+      program: { select: { name: true, slug: true } },
+      accommodationType: { select: { name: true, key: true } },
     },
   },
   messages: {
@@ -82,12 +90,29 @@ function toNullableJsonInput(value: Record<string, unknown> | null | undefined):
   return value == null ? Prisma.JsonNull : (value as Prisma.InputJsonValue);
 }
 
+function publicFileUrl(url: string): string {
+  return /^https?:\/\//i.test(url) ? url : `${env.PUBLIC_BASE_URL.replace(/\/+$/, '')}/${url.replace(/^\/+/, '')}`;
+}
+function deliveryStatus(value: unknown): string {
+  const status = typeof value === 'string' ? value.toUpperCase() : 'UNKNOWN';
+  if (['READ', 'DELIVERED', 'RESERVED', 'FAILED', 'ACCEPTED'].includes(status)) return status;
+  return status === 'SENT' ? 'ACCEPTED' : status === 'FAILED_TO_REQUEST' ? 'FAILED' : 'UNKNOWN';
+}
 function mapConversation(record: ConversationRecord): ConversationDetail {
   const latestUnreadMessage = [...record.messages]
     .reverse()
     .find((item) => item.direction === 'INBOUND' && !item.readByAdminAt) ?? null;
 
-  return {
+  const context = record.contextJson as Record<string, unknown> | null;
+  const current = record.inquiries[0];
+  const recommendation = context?.resourceRecommendation as { criteria?: Record<string, unknown>; resourceIds?: string[]; status?: string; presentedAt?: string } | undefined;
+  const detail: ConversationDetail = {
+    recommendations: (current?.recommendations ?? []).map((item) => ({ id: item.id, title: item.resource?.title ?? item.program.name,
+      reason: item.reason, criteria: null, createdAt: item.createdAt, status: 'REGISTERED' })),
+    files: (current?.resourceSends ?? []).map((send) => ({ id: send.id, title: send.resource.title,
+      fileName: send.resourceVersion?.fileName ?? null, versionId: send.resourceVersionId,
+      versionNumber: send.resourceVersion?.versionNumber ?? null, url: send.resourceVersion?.fileUrl ? publicFileUrl(send.resourceVersion.fileUrl) : null,
+      createdAt: send.sentAt, deliveryStatus: send.deliveryStatus, delivered: ['DELIVERED', 'READ'].includes(send.deliveryStatus) })),
     id: record.id,
     channel: record.channel,
     status: record.status,
@@ -108,6 +133,11 @@ function mapConversation(record: ConversationRecord): ConversationDetail {
       return {
         id: item.id,
         status: item.status,
+        progress: inquiryProgress({ ...item, qualificationJson: qualification, contact: item.contact ?? record.contact }, recommendation),
+        preferredStartStatus: item.preferredStartMonth != null ? 'DEFINED' : qualification?.preferredStartStatus === 'UNDECIDED' ? 'UNDECIDED' : null,
+        weeksStatus: item.weeks != null ? 'DEFINED' : qualification?.weeksStatus === 'UNDECIDED' ? 'UNDECIDED' : null,
+        tripDays: typeof qualification?.tripDays === 'number' ? qualification.tripDays : null,
+        updatedAt: item.updatedAt,
         studentAge: item.studentAge,
         residenceCountry,
         cityOfResidence: item.cityOfResidence,
@@ -151,6 +181,8 @@ function mapConversation(record: ConversationRecord): ConversationDetail {
     createdAt: record.createdAt,
     updatedAt: record.updatedAt,
   };
+  detail.currentInquiry = detail.inquiries[0] ?? null;
+  return detail;
 }
 
 function mapListItem(record: ConversationRecord): ConversationListItem {
@@ -165,6 +197,7 @@ function mapListItem(record: ConversationRecord): ConversationListItem {
     lastMessageAt: detail.lastMessageAt,
     contextJson: detail.contextJson,
     contact: detail.contact,
+    currentInquiry: detail.inquiries[0] ?? null,
     inquiriesCount: detail.inquiriesCount,
     messagesCount: detail.messagesCount,
     unreadMessagesCount: detail.unreadMessagesCount,
@@ -177,6 +210,18 @@ function mapListItem(record: ConversationRecord): ConversationListItem {
 }
 
 export class PrismaConversationRepository implements ConversationRepository {
+  async persistConciergeOutcome(input: PersistConciergeOutcomeInput): Promise<void> {
+    await prisma.$transaction(async (tx) => {
+      if (input.inquiryId && input.inquiryStatus) await tx.inquiry.update({ where: { id: input.inquiryId }, data: { status: input.inquiryStatus } });
+      await tx.message.create({ data: { conversationId: input.conversationId, direction: 'OUTBOUND', text: input.replyText,
+        mediaUrl: input.mediaUrl, metadata: input.metadata as Prisma.InputJsonValue } });
+      await tx.conversation.update({ where: { id: input.conversationId }, data: {
+        ...(input.explicitlyClosed ? { status: 'CLOSED' } : {}),
+        ...(input.nextStage ? { currentStage: input.nextStage } : {}),
+        contextJson: input.contextJson as Prisma.InputJsonValue, lastMessageAt: new Date(),
+      } });
+    });
+  }
   async findMany(query: ListConversationsQuery): Promise<ConversationListItem[]> {
     const items = await prisma.conversation.findMany({
       where: {
@@ -198,12 +243,57 @@ export class PrismaConversationRepository implements ConversationRepository {
       select: conversationSelect,
     });
 
-    return items.map(mapListItem);
+    return items.map(mapListItem).filter((item) => !query.inquiryStatus || item.currentInquiry?.status === query.inquiryStatus);
   }
 
   async findById(conversationId: string): Promise<ConversationDetail | null> {
     const conversation = await prisma.conversation.findUnique({ where: { id: conversationId }, select: conversationSelect });
-    return conversation ? mapConversation(conversation) : null;
+    if (!conversation) return null;
+    const detail = mapConversation(conversation);
+    detail.currentInquiry = detail.inquiries[0] ?? null;
+    const current = conversation.inquiries[0];
+    if (!current) return detail;
+    const context = conversation.contextJson as Record<string, unknown> | null;
+    const r = context?.resourceRecommendation as { criteria?: Record<string, unknown>; resourceIds?: string[]; status?: string; presentedAt?: string } | undefined;
+    const urls = new Map<string, { messageId: string; createdAt: Date; deliveryStatus: string }>();
+    for (const message of conversation.messages) {
+      if (message.direction === 'SYSTEM' || message.createdAt < current.createdAt) continue;
+      const metadata = message.metadata as Record<string, unknown> | null;
+      const mediaUrls = [...new Set([message.mediaUrl, ...(Array.isArray(metadata?.mediaUrls) ? metadata.mediaUrls : [])]
+        .filter((url): url is string => typeof url === 'string'))];
+      for (const [index, url] of mediaUrls.entries()) {
+        const statuses = Array.isArray(metadata?.metaMediaStatuses) ? metadata.metaMediaStatuses : [];
+        urls.set(publicFileUrl(url), { messageId: message.id, createdAt: message.createdAt,
+          deliveryStatus: message.direction === 'INBOUND' ? 'RECEIVED' : deliveryStatus(statuses[index]) });
+      }
+    }
+
+    // Match historical URLs/IDs against every version, never assume the current edition was sent.
+    const ids = [...urls.keys()].flatMap((url) => url.match(/versions\/([0-9a-f-]{36})\//i)?.[1] ?? []);
+    const versions = await prisma.resourceVersion.findMany({ where: { OR: [
+      { id: { in: ids } }, { fileUrl: { in: [...new Set([...urls.keys()].flatMap((url) => [url, url.startsWith(env.PUBLIC_BASE_URL.replace(/\/+$/, '') + '/') ? url.slice(env.PUBLIC_BASE_URL.replace(/\/+$/, '').length) : url]))] } },
+      { resourceId: { in: r?.criteria?.inquiryId === current.id ? r.resourceIds ?? [] : [] } },
+    ] }, include: { resource: true } });
+    if (r?.criteria?.inquiryId === current.id && r.presentedAt) {
+      for (const id of r.resourceIds ?? []) {
+        const version = versions.find((item) => item.resourceId === id);
+        detail.recommendations.push({ id, title: version?.resource.title ?? id, reason: null,
+          criteria: r.criteria, createdAt: new Date(r.presentedAt), status: inquiryProgress({ ...current,
+            qualificationJson: current.qualificationJson as Record<string, unknown> | null }, r).recommendationConfirmed ? 'CONFIRMED' : 'OUTDATED' });
+      }
+    }
+    for (const [url, message] of urls) {
+      const version = versions.find((item) => publicFileUrl(item.fileUrl) === url || url.includes(`/versions/${item.id}/`));
+      const existing = detail.files.find((file) => file.url === url || (version && file.versionId === version.id));
+      if (existing) continue;
+      const legacy = version && detail.files.find((file) => !file.versionId && current.resourceSends.some((send) => send.id === file.id && send.resourceId === version.resourceId));
+      const file = { id: `${message.messageId}:${url}`, title: version?.resource.title ?? 'Archivo adjunto', fileName: version?.fileName ?? null,
+        versionId: version?.id ?? null, versionNumber: version?.versionNumber ?? null, url,
+        createdAt: message.createdAt, deliveryStatus: message.deliveryStatus, delivered: ['DELIVERED', 'READ'].includes(message.deliveryStatus) };
+      if (legacy) Object.assign(legacy, file, { id: legacy.id, deliveryStatus: legacy.deliveryStatus === 'UNKNOWN' ? file.deliveryStatus : legacy.deliveryStatus, delivered: legacy.delivered || (legacy.deliveryStatus === 'UNKNOWN' && file.delivered) });
+      else detail.files.push(file);
+    }
+    return detail;
   }
 
   async create(input: CreateConversationInput): Promise<ConversationDetail> {

@@ -86,6 +86,7 @@ function memoryHarness(t: { after: (fn: () => void) => void }) {
   const traces: Array<{ toolName?: string; callId?: string }> = [];
   let failure: Error & { status?: number; param?: string };
   const repository = { findById: async () => conversation,
+    persistConciergeOutcome: async (args: { replyText: string; contextJson: typeof conversation.contextJson }) => { conversation.messages.push({ id: 'outgoing', direction: 'OUTBOUND', text: args.replyText, createdAt: new Date() }); conversation.contextJson = args.contextJson; },
     createMessage: async (args: { text: string }) => { conversation.messages.push({ id: 'outgoing', direction: 'OUTBOUND', text: args.text, createdAt: new Date() }); return conversation; },
     update: async (args: { contextJson: typeof conversation.contextJson }) => { conversation.contextJson = args.contextJson; return conversation; } };
   const makeService = () => new ConciergeOrchestratorService(repository as never, {} as never, {

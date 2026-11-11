@@ -1,3 +1,4 @@
+import { inquiryProgress, nextInquiryStatus, recommendationCriteria } from '../../../inquiries/domain/services/inquiry-progress.js';
 import { resourceStayCompatibility } from '../../../resources/domain/resource-stay-compatibility.js';
 import { Prisma } from '@prisma/client';
 import { logger } from '../../../../shared/config/logger.js';
@@ -153,6 +154,14 @@ export class ConciergeOrchestratorService {
       await this.turnTraceRepository.createToolCall({ turnId: turn.id, callId: 'interpret_message', toolName: 'interpret_message', argumentsJson: inputPayload });
       try {
         context = await this.hydrateInquiryFromLatestMessage(context);
+        if (context.activeInquiry) {
+          const status = nextInquiryStatus(context.activeInquiry, context.conversation?.contextJson?.resourceRecommendation);
+          if (status !== context.activeInquiry.status) {
+            await this.inquiryRepository.updateStatus({ inquiryId: context.activeInquiry.id, status });
+            context.activeInquiry = { ...context.activeInquiry, status };
+            conversationRealtimeHub.publish({ type: 'conversation.updated', conversationId: params.conversationId });
+          }
+        }
         await this.turnTraceRepository.completeToolCall({ turnId: turn.id, callId: 'interpret_message', outputJson: context.interpretation });
       } catch (error) {
         await this.turnTraceRepository.failToolCall({ turnId: turn.id, callId: 'interpret_message', errorMessage: this.getErrorMessage(error) });
@@ -221,12 +230,14 @@ export class ConciergeOrchestratorService {
       });
       await this.applyStayRecommendation(context, policyResult);
       const normalized = policyResult.structured;
+      if (normalized.nextStage === 'CLOSED' && context.interpretation?.intent !== 'CLOSE') normalized.nextStage = 'RECOMMEND';
       const mediaUrls = policyResult.outboundMediaUrls ?? (policyResult.outboundMediaUrl ? [policyResult.outboundMediaUrl] : []);
       if (mediaUrls.length) {
         const delivery = await new ResourceDeliveryGuardService().prepareDelivery(mediaUrls, context.activeInquiry?.id ?? null);
         const allowed = delivery.urls;
         // Never claim to have sent an attachment that has become ineligible during the turn.
         if (allowed.length !== mediaUrls.length) {
+          policyResult.handoffConfirmed = false;
           normalized.replyText = allowed.length
             ? 'Con gusto, te comparto los folletos que siguen vigentes. Un asesor de TKTours puede ayudarte con las otras opciones.'
             : 'Por el momento no tengo un folleto vigente para esas fechas. Con gusto, un asesor de TKTours te ayudará con las opciones actualizadas.';
@@ -271,6 +282,8 @@ export class ConciergeOrchestratorService {
         shouldRefreshRecommendations: normalized.shouldRefreshRecommendations ?? false,
         responseId: finalResponseId,
         existingContextJson: context.conversation?.contextJson ?? null,
+        handoffConfirmed: policyResult.handoffConfirmed === true,
+        explicitlyClosed: context.interpretation?.intent === 'CLOSE' && !context.interpretation.needsClarification,
         contextPatch: policyResult.contextPatch ?? null,
       });
 
@@ -281,6 +294,7 @@ export class ConciergeOrchestratorService {
         structuredResponseJson: {
           ...(normalized as unknown as Record<string, unknown>),
           policyTrace: policyResult.trace,
+          lifecycle: { inquiryId: context.activeInquiry?.id ?? null, handoffConfirmed: policyResult.handoffConfirmed === true },
         },
       });
 
@@ -292,6 +306,7 @@ export class ConciergeOrchestratorService {
           rawText: finalText,
           structured: normalized,
           policyTrace: policyResult.trace,
+          lifecycle: { inquiryId: context.activeInquiry?.id ?? null, handoffConfirmed: policyResult.handoffConfirmed === true },
         },
         persistedConversation,
       };
@@ -800,12 +815,21 @@ export class ConciergeOrchestratorService {
     contextPatch?: Record<string, unknown> | null;
     outboundMediaUrl?: string | null;
     outboundMediaUrls?: string[] | null;
+    handoffConfirmed?: boolean;
   }> {
     if (context.interpretation?.needsClarification) return {
       structured: { ...parsed, replyText: context.interpretation.clarificationQuestion?.trim() || '¿Puedes aclararme qué opción te interesa?',
         missingFields: [], shouldAskFollowUp: true, shouldRefreshRecommendations: false, nextStage: context.conversation?.currentStage ?? 'START' },
       trace: { strategy: 'single_follow_up', details: { reason: 'interpretation_needs_clarification' } },
       outboundMediaUrls: [], outboundMediaUrl: null,
+    };
+    if (context.interpretation?.intent === 'CLOSE') return {
+      structured: { ...parsed, nextStage: 'CLOSED', shouldAskFollowUp: false, missingFields: [], shouldRefreshRecommendations: false },
+      trace: { strategy: 'none', details: { reason: 'explicit_close' } },
+    };
+    if (context.activeInquiry?.status === 'WAITING_HUMAN') return {
+      structured: { ...parsed, nextStage: 'ESCALATED', shouldRefreshRecommendations: false },
+      trace: { strategy: 'none', details: { reason: 'waiting_for_advisor_continues' } },
     };
     const detectedIntent = await this.detectIntentWithTool(context);
     const initialGreeting = detectedIntent === 'GREETING' && !context.restarted && !this.findPreviousOutboundMessage(context);
@@ -954,11 +978,13 @@ export class ConciergeOrchestratorService {
       return {
         structured: {
           ...parsed,
+          replyText: handoffStep === 'confirm_handoff' ? await this.buildPromptDrivenHandoffConfirmation({ context, fallbackReplyText: parsed.replyText }) : parsed.replyText,
           shouldAskFollowUp: handoffStep !== 'confirm_handoff',
           missingFields: [],
-          nextStage: 'ESCALATED',
+          nextStage: handoffStep === 'confirm_handoff' ? 'ESCALATED' : 'RECOMMEND',
           shouldRefreshRecommendations: false,
         },
+        handoffConfirmed: handoffStep === 'confirm_handoff',
         trace: {
           strategy: handoffStep === 'confirm_handoff' ? 'none' : 'single_follow_up',
           details: {
@@ -1171,7 +1197,7 @@ export class ConciergeOrchestratorService {
               tripDays: this.getTripDaysFromInquiry(context.activeInquiry),
             },
           },
-          contextPatch,
+          contextPatch: this.mergeContextPatch(contextPatch, { resourceRecommendation: { criteria: recommendationCriteria(context.activeInquiry!), status: 'CONFIRMED', resourceIds: [circuitCandidate.resourceId], versionIds: [circuitCandidate.versionId], presentedAt: new Date().toISOString() } }),
           outboundMediaUrl: this.toAbsoluteMediaUrl(circuitCandidate.fileUrl),
           outboundMediaUrls: this.toAbsoluteMediaUrls([circuitCandidate.fileUrl]),
         };
@@ -1202,8 +1228,8 @@ export class ConciergeOrchestratorService {
     }
 
     if (!nextField) {
-      const shouldCloseConversation = this.isReadyForAdvisorHandoff(context) && this.hasContactName(context) && this.hasContactEmail(context);
-      const replyText = shouldCloseConversation
+      const shouldConfirmHandoff = this.isReadyForAdvisorHandoff(context) && this.hasContactName(context) && this.hasContactEmail(context);
+      const replyText = shouldConfirmHandoff
         ? await this.buildPromptDrivenHandoffConfirmation({
             context,
             fallbackReplyText: parsed.replyText,
@@ -1213,14 +1239,15 @@ export class ConciergeOrchestratorService {
         structured: {
           ...parsed,
           replyText,
-          nextStage: shouldCloseConversation ? 'CLOSED' : parsed.nextStage,
+          nextStage: shouldConfirmHandoff ? 'ESCALATED' : parsed.nextStage,
           shouldAskFollowUp: false,
           missingFields: [],
         },
+        handoffConfirmed: shouldConfirmHandoff,
         trace: {
           strategy: 'none',
           details: {
-            reason: 'no_missing_field_after_policy',
+            reason: shouldConfirmHandoff ? 'advisor_handoff_confirm_handoff' : 'no_missing_field_after_policy',
             intent: detectedIntent,
             confidence: policySignals.confidence,
           },
@@ -2145,6 +2172,7 @@ export class ConciergeOrchestratorService {
       const maintainMonth = context.interpretation?.maintainTravelMonth === true;
       if (maintainMonth) return {
         structured: { ...parsed, replyText: `Mantendremos tu preferencia por ${monthName}${year ? ` de ${year}` : ''}. Un asesor de TKTours dará seguimiento para confirmar opciones para esas fechas.`, missingFields: [], shouldAskFollowUp: false, nextStage: 'ESCALATED', shouldRefreshRecommendations: false },
+        handoffConfirmed: !!inquiry && inquiryProgress(inquiry).captureComplete,
         trace: { strategy: 'none', details: { reason: 'requested_month_advisor_follow_up' } },
         contextPatch: {}, outboundMediaUrls: [], outboundMediaUrl: null,
       };
@@ -2193,6 +2221,7 @@ export class ConciergeOrchestratorService {
   private async applyStayRecommendation(context: ConciergeTurnContext, result: Awaited<ReturnType<ConciergeOrchestratorService['applyReplyPolicy']>>): Promise<void> {
     const inquiry = context.activeInquiry;
     const interpreted = context.interpretation;
+    if (interpreted?.intent === 'CLOSE' || inquiry?.status === 'WAITING_HUMAN') return;
     if ((!inquiry?.preferredStartMonth || !inquiry.weeks) && context.conversation?.contextJson?.resourceRecommendation) {
       result.contextPatch = this.mergeContextPatch(result.contextPatch ?? null, { resourceRecommendation: null });
     }
@@ -2212,8 +2241,7 @@ export class ConciergeOrchestratorService {
       .filter((item): item is CampBrochureCandidate => item !== null && (item.minAge == null || inquiry.studentAge! >= item.minAge) && (item.maxAge == null || inquiry.studentAge! <= item.maxAge));
     const matches = candidates.filter((item) => resourceStayCompatibility(item, inquiry.preferredStartMonth!, inquiry.weeks!, inquiry.preferredStartYear) === 'CONFIRMED');
     const uncertain = candidates.some((item) => resourceStayCompatibility(item, inquiry.preferredStartMonth!, inquiry.weeks!, inquiry.preferredStartYear) === 'UNCONFIRMED');
-    const criteria = { inquiryId: inquiry.id, country: inquiry.country.code, family: inquiry.family.key, city: inquiry.location.slug,
-      program: inquiry.program?.slug ?? null, age: inquiry.studentAge, month: inquiry.preferredStartMonth, year: inquiry.preferredStartYear, weeks: inquiry.weeks };
+    const criteria = recommendationCriteria(inquiry);
     const status = matches.length ? 'CONFIRMED' : uncertain ? 'UNCONFIRMED' : 'NONE';
     const fingerprint = JSON.stringify({ criteria, status, versions: matches.map((item) => item.versionId).sort() });
     const previous = context.conversation?.contextJson?.resourceRecommendation as { fingerprint?: string } | undefined;
@@ -2226,7 +2254,7 @@ export class ConciergeOrchestratorService {
         ? `¡Perfecto! 😊 ${names[0]} se ajusta a las ${inquiry.weeks} semanas que buscas para iniciar en ${month}.`
         : `¡Perfecto! 😊 Estas opciones se ajustan a las ${inquiry.weeks} semanas que buscas para iniciar en ${month}:\n${names.map((name) => `• ${name}`).join('\n')}`;
       const followUp = nextField ? await this.buildPromptDrivenFollowUp({ context, nextField, fallbackReplyText: nextField === 'contactName' ? '¿Me compartes tu nombre completo?' : nextField === 'contactEmail' ? '¿Me compartes tu correo electrónico?' : result.structured.replyText }) : '';
-      const handoff = !nextField && result.structured.nextStage === 'CLOSED' ? ' Con los datos capturados, un asesor de TKTours continuará con el seguimiento.' : '';
+      const handoff = !nextField && result.handoffConfirmed ? ' Con los datos capturados, un asesor de TKTours continuará con el seguimiento.' : '';
       result.structured.replyText = `${confirmation} Las fechas exactas y el cupo los confirmará un asesor.${handoff}${followUp ? `\n\n${followUp}` : ''}`;
       result.structured.shouldAskFollowUp = Boolean(followUp);
       result.structured.missingFields = nextField ? [nextField] : [];
@@ -2235,6 +2263,7 @@ export class ConciergeOrchestratorService {
       result.outboundMediaUrls = urls.filter((url) => eligible.has(url));
       result.outboundMediaUrl = result.outboundMediaUrls[0] ?? null;
     } else {
+      result.handoffConfirmed = interpreted.maintainTravelMonth && inquiryProgress(inquiry).captureComplete;
       result.structured.replyText = uncertain
         ? `Para ${inquiry.weeks} semanas comenzando en ${month}, falta confirmar la duración o las fechas de las opciones disponibles. ¿Prefieres revisar alternativas o mantener tu preferencia para seguimiento de un asesor?`
         : `No tengo una opción confirmada para ${inquiry.weeks} semanas completas comenzando en ${month}. ¿Prefieres revisar otro mes o duración, o mantener tu preferencia para seguimiento de un asesor?`;
@@ -2326,7 +2355,7 @@ export class ConciergeOrchestratorService {
       | 'ASK_CIRCUITS'
       | 'UNKNOWN'
   > {
-    if (context.interpretation) return context.interpretation.intent === 'RESTART' ? 'GREETING' : context.interpretation.intent;
+    if (context.interpretation) return context.interpretation.intent === 'RESTART' ? 'GREETING' : context.interpretation.intent === 'CLOSE' ? 'UNKNOWN' : context.interpretation.intent;
     const latestMessage = context.latestMessage?.text ?? '';
     const recentMessages = (context.conversation?.messages ?? [])
       .slice(-12)
@@ -2579,35 +2608,7 @@ export class ConciergeOrchestratorService {
     | 'contactEmail'
     | null {
     if (!inquiry) return null;
-    const preferredStartStatus = this.getPreferredStartStatusFromInquiry(inquiry);
-    const weeksStatus = this.getWeeksStatusFromInquiry(inquiry);
-    if (!inquiry.family?.key) return 'family';
-
-    if (this.isCircuitsInquiry(inquiry)) {
-      if (!inquiry.country?.code) return 'country';
-      if (this.getTripDaysFromInquiry(inquiry) == null) return 'tripDays';
-      return null;
-    }
-
-    if (inquiry.family.key === 'CAMP') {
-      if (inquiry.studentAge == null) return 'studentAge';
-      if (!inquiry.country?.code) return 'country';
-      if (!this.getResidenceCountryFromInquiry(inquiry)) return 'residenceCountry';
-      if (preferredStartStatus !== 'UNDECIDED' && inquiry.preferredStartMonth == null) return 'preferredStartMonth';
-      if (weeksStatus !== 'UNDECIDED' && inquiry.weeks == null) return 'weeks';
-      if (!this.hasContactNameForInquiry(inquiry)) return 'contactName';
-      if (!this.hasContactEmailForInquiry(inquiry)) return 'contactEmail';
-      return null;
-    }
-
-    if (!inquiry.country?.code) return 'country';
-    if (inquiry.studentAge == null) return 'studentAge';
-    if (!this.getResidenceCountryFromInquiry(inquiry)) return 'residenceCountry';
-    if (preferredStartStatus !== 'UNDECIDED' && inquiry.preferredStartMonth == null) return 'preferredStartMonth';
-    if (weeksStatus !== 'UNDECIDED' && inquiry.weeks == null) return 'weeks';
-    if (!this.hasContactNameForInquiry(inquiry)) return 'contactName';
-    if (!this.hasContactEmailForInquiry(inquiry)) return 'contactEmail';
-    return null;
+    return inquiryProgress(inquiry).missingFields[0] as ReturnType<ConciergeOrchestratorService['getEnforcedNextField']> ?? null;
   }
 
   private getFirstStillMissingField(
@@ -2776,7 +2777,6 @@ export class ConciergeOrchestratorService {
       return null;
     }
 
-    const contact = context.activeInquiry?.contact ?? context.conversation?.contact ?? null;
     const hasName = this.hasContactName(context);
     const hasEmail = this.hasContactEmail(context);
 
@@ -2791,12 +2791,7 @@ export class ConciergeOrchestratorService {
 
   private isReadyForAdvisorHandoff(context: ConciergeTurnContext): boolean {
     const inquiry = context.activeInquiry;
-    if (!inquiry?.family?.key) return false;
-    if (this.isCircuitsInquiry(inquiry)) return false;
-    if (!inquiry.country?.code) return false;
-    if (inquiry.studentAge == null) return false;
-    if (!this.getResidenceCountryFromInquiry(inquiry)) return false;
-    return true;
+    return !!inquiry && inquiryProgress(inquiry).readyToSearch;
   }
 
   private hasContactEmail(context: ConciergeTurnContext): boolean {
@@ -2820,7 +2815,7 @@ export class ConciergeOrchestratorService {
   private hasContactNameFromContact(contact: { firstName?: string | null; lastName?: string | null } | null): boolean {
     const firstName = contact?.firstName?.trim() ?? '';
     const lastName = contact?.lastName?.trim() ?? '';
-    return Boolean(lastName || (firstName && firstName.includes(' ')));
+    return Boolean(firstName && (lastName || firstName.includes(' ')));
   }
 
   private isCircuitsInquiry(inquiry: ConciergeTurnContext['activeInquiry']): boolean {
@@ -3011,7 +3006,7 @@ export class ConciergeOrchestratorService {
       const contact = params.context.activeInquiry?.contact ?? params.context.conversation?.contact ?? null;
       const instructions = [
         'Eres un concierge comercial para TKTours.',
-        'Escribe un cierre breve, cálido, amable y natural en español.',
+        'Escribe una confirmación breve, cálida y natural de pase a un asesor. La conversación sigue abierta.',
         'El cliente ya tiene datos de contacto guardados; NO pidas nombre ni correo.',
         'Confirma que la información quedó lista y que un asesor dará seguimiento más adelante.',
         'No prometas precios, disponibilidad ni tiempos exactos.',
@@ -3033,9 +3028,9 @@ export class ConciergeOrchestratorService {
       });
 
       const candidate = (response.outputText ?? '').trim();
-      return candidate || params.fallbackReplyText;
+      return candidate || 'Tus datos quedaron registrados. Un asesor de TKTours dará seguimiento a tu solicitud.';
     } catch {
-      return params.fallbackReplyText;
+      return 'Tus datos quedaron registrados. Un asesor de TKTours dará seguimiento a tu solicitud.';
     }
   }
 
@@ -3269,64 +3264,34 @@ export class ConciergeOrchestratorService {
     resourceDeliveries: Array<{ sendId: string; versionId: string; url: string }>;
     nextStage: string | null;
     shouldRefreshRecommendations: boolean;
+    handoffConfirmed: boolean;
+    explicitlyClosed: boolean;
     responseId: string;
     existingContextJson: Record<string, unknown> | null;
     contextPatch: Record<string, unknown> | null;
   }) {
-    let conversation = await this.conversationRepository.createMessage({
-      conversationId: params.conversationId,
-      direction: 'OUTBOUND',
-      text: params.replyText,
-      mediaUrl: params.mediaUrl,
-      metadata: {
-        source: 'concierge-orchestrator',
-        mediaUrls: params.mediaUrls ?? [],
-        resourceDeliveries: params.resourceDeliveries,
-      },
-    });
-
-    const nextContextJson = {
-      ...(params.existingContextJson ?? {}),
-      ...(params.contextPatch ?? {}),
-      [this.conversationContextResponseKey]: {
-        lastResponseId: params.responseId,
-        model: this.responsesClient.getModel(),
-        updatedAt: new Date().toISOString(),
-      },
+    const inquiry = params.activeInquiryId ? await this.inquiryRepository.findById(params.activeInquiryId) : null;
+    const nextContextJson: Record<string, unknown> = {
+      ...(params.existingContextJson ?? {}), ...(params.contextPatch ?? {}),
+      [this.conversationContextResponseKey]: { lastResponseId: params.responseId, model: this.responsesClient.getModel(), updatedAt: new Date().toISOString() },
     };
-
-    conversation = await this.conversationRepository.update({
-      conversationId: params.conversationId,
-      ...(params.nextStage
-        ? {
-            ...(params.nextStage === 'CLOSED' ? { status: 'CLOSED' as const } : {}),
-            currentStage: params.nextStage as
-              | 'START'
-              | 'QUALIFY_AGE'
-              | 'QUALIFY_COUNTRY'
-              | 'QUALIFY_PROGRAM'
-              | 'QUALIFY_ACCOMMODATION'
-              | 'QUALIFY_DATES'
-              | 'RECOMMEND'
-              | 'SEND_RESOURCE'
-              | 'ESCALATED'
-              | 'CLOSED',
-          }
-        : {}),
-      contextJson: nextContextJson,
+    const status = inquiry ? nextInquiryStatus(inquiry, nextContextJson.resourceRecommendation, params) : null;
+    const nextStage = params.explicitlyClosed ? 'CLOSED' : status === 'WAITING_HUMAN' ? 'ESCALATED'
+      : params.nextStage === 'CLOSED' ? 'RECOMMEND' : params.nextStage;
+    await this.conversationRepository.persistConciergeOutcome({
+      conversationId: params.conversationId, inquiryId: params.activeInquiryId, inquiryStatus: status,
+      nextStage: nextStage as Parameters<PrismaConversationRepository['persistConciergeOutcome']>[0]['nextStage'],
+      explicitlyClosed: params.explicitlyClosed, contextJson: nextContextJson,
+      replyText: params.replyText, mediaUrl: params.mediaUrl,
+      metadata: { source: 'concierge-orchestrator', mediaUrls: params.mediaUrls ?? [], resourceDeliveries: params.resourceDeliveries,
+        lifecycle: { inquiryId: params.activeInquiryId, handoffConfirmed: status === 'WAITING_HUMAN' && params.handoffConfirmed, at: new Date().toISOString() } },
     });
-
-    if (params.activeInquiryId && params.nextStage === 'CLOSED') {
-      await this.inquiryRepository.updateStatus({
-        inquiryId: params.activeInquiryId,
-        status: 'CLOSED',
-      });
-    }
-
     if (params.activeInquiryId && params.shouldRefreshRecommendations) {
       await this.refreshInquiryRecommendationsUseCase.execute(params.activeInquiryId);
     }
-
+    const conversation = await this.conversationRepository.findById(params.conversationId);
+    if (!conversation) throw new NotFoundAppError('Conversation not found');
+    conversationRealtimeHub.publish({ type: 'conversation.updated', conversationId: params.conversationId });
     return conversation;
   }
 

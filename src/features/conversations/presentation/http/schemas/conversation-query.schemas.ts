@@ -16,6 +16,7 @@ const optionalTrimmedString = z.preprocess((value) => {
 
 export const listConversationsQuerySchema = z.object({
   status: z.preprocess(getFirstQueryValue, z.enum(STATUS_KEYS).optional()),
+  inquiryStatus: z.preprocess(getFirstQueryValue, z.enum(['OPEN', 'QUALIFYING', 'READY_TO_RECOMMEND', 'RECOMMENDED', 'WAITING_HUMAN', 'CLOSED']).optional()),
   channel: z.preprocess(getFirstQueryValue, z.enum(CHANNELS).optional()),
   contactId: optionalTrimmedString,
   search: optionalTrimmedString,

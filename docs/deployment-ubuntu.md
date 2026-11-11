@@ -162,3 +162,32 @@ docker compose --profile migrate run --rm migrate
 docker compose up -d --force-recreate tktours-concierge-backend
 docker compose logs --tail=100 tktours-concierge-backend
 ```
+
+### Estados del prospecto y ficha de conversación
+
+Este cambio no agrega migraciones ni modifica enums o rutas. Desplegar primero el backend
+compatible con `currentInquiry`, `recommendations` y `files`; después, el frontend. El listado
+acepta `inquiryStatus` además de los filtros existentes de conversación.
+
+La captura avanza con datos persistidos; una recomendación requiere evidencia compatible con
+las preferencias actuales. Confirmar el pase deja la solicitud en `WAITING_HUMAN`, la etapa en
+`ESCALATED` y la conversación abierta. El control AI/HUMAN se cambia por separado. Pedir nombre
+o correo no completa el pase. Solo un cierre explícito cierra la solicitud.
+
+Desde un checkout con dependencias de desarrollo instaladas y el `.env` de producción:
+
+```bash
+# Vista previa: no modifica registros.
+NODE_ENV=production pnpm inquiries:reconcile-handoffs
+# Aplicación explícita, con una segunda comprobación dentro de la transacción.
+NODE_ENV=production pnpm inquiries:reconcile-handoffs --apply
+```
+
+El comando solo corrige solicitudes actuales en `OPEN`, con captura completa y una única traza
+completada de pase para esa solicitud. Excluye conversaciones cerradas o archivadas y registros
+modificados después del pase. Registra identificadores, estados y traza usada tanto en la salida
+JSON como en `qualificationJson.handoffReconciliation`. Ejecutarlo otra vez no repite la corrección.
+No analiza palabras de mensajes ni cambia el contacto, los mensajes o los recursos.
+
+Validación: `pnpm test`, `pnpm build`, y en el frontend `pnpm build` y `pnpm lint`.
+La prueba `pnpm test:inbox` requiere una base local desechable cuyo nombre termine en `_test`.

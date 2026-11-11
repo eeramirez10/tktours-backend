@@ -181,11 +181,14 @@ for (const eligible of [true, false]) {
     const { service: base } = harness();
     const tools = base.toolExecutor;
     const service = new ConciergeOrchestratorService({
+      findById: async () => conversation,
+      persistConciergeOutcome: async (args: { replyText: string; contextJson: Record<string, unknown> }) => { persisted = { ...args, text: args.replyText }; savedContext = args.contextJson; },
       createMessage: async (args: Record<string, unknown>) => { persisted = args; return conversation; },
       update: async (args: { contextJson: Record<string, unknown> }) => { savedContext = args.contextJson; return conversation; },
     } as never, {
       update: async (args: { locationSlug?: string }) => { if (args.locationSlug) lead = { ...lead, location: cities.find((city) => city.slug === args.locationSlug) }; },
       findById: async () => lead,
+      updateStatus: async () => {},
     } as never, {
       getModel: () => 'unit-test-model',
       createTextResponse: async (args: { tools?: unknown }) => ({ id: 'response', raw: { output: [] },

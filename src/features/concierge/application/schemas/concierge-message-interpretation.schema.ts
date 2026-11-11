@@ -2,7 +2,7 @@ import { z } from 'zod';
 
 // Every semantic decision comes from this single, validated interpretation of the turn.
 export const conciergeMessageInterpretationSchema = z.object({
-  intent: z.enum(['GREETING', 'RESTART', 'ASK_AVAILABLE_COUNTRIES', 'ASK_AVAILABLE_PROGRAMS', 'REQUEST_QUOTE', 'ASK_LANGUAGE_COURSES', 'ASK_CAMPS', 'ASK_CIRCUITS', 'UNKNOWN']),
+  intent: z.enum(['GREETING', 'RESTART', 'CLOSE', 'ASK_AVAILABLE_COUNTRIES', 'ASK_AVAILABLE_PROGRAMS', 'REQUEST_QUOTE', 'ASK_LANGUAGE_COURSES', 'ASK_CAMPS', 'ASK_CIRCUITS', 'UNKNOWN']),
   countryCode: z.string().nullable(),
   locationSlug: z.string().nullable(),
   programSlug: z.string().nullable(),

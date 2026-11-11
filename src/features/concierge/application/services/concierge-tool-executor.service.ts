@@ -218,6 +218,7 @@ export class ConciergeToolExecutorService {
         'brochureAction interprets the supplied brochureState. OFFERED: SEND for confirmation of a single available season, selection of one or more available seasons, or all; CLARIFY for a confirmation with multiple seasons and no selection. SENT: SEND only for an explicit resend request (requestsResource=true). DECLINE for rejection or postponement; UNKNOWN for unrelated answers. selectedSeasonKeys refers only to the available brochure seasons; sendAllResources=true only when they ask for all.',
         'maintainTravelMonth means they want advisor follow-up for their requested month rather than alternate dates.',
         'Use needsClarification and a short Spanish clarificationQuestion for ambiguous menu selections, invalid destinations or uncertain intent. Do not guess or overwrite captured data.',
+        'CLOSE requires an explicit request to close or cancel this inquiry. Supplying contact details, thanking or greeting never closes it.',
         'handoffStep describes the current advisor handoff based on history and the captured contact data.',
       ].join('\n'),
       input: JSON.stringify({ ...args, countries: countries.map(({ code, name }) => ({ code, name })) }),
